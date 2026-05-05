@@ -113,7 +113,7 @@ Each host runs:
 ### 4.1 Repository Layout
 
 ```text
-iac-laptoplab/
+iac-plh/
 ├── bootstrap/          # Host bootstrap scripts
 ├── inventory/          # Host-specific YAML configs
 ├── platforms/          # Declarative container definitions

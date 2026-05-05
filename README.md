@@ -1,4 +1,4 @@
-# iac-laptoplab
+# iac-plh
 
 Infrastructure-as-Code repository for a self-hosted, vendor-agnostic AI appliance built on Linux hosts, LXD system containers, and local model serving.
 
@@ -59,7 +59,7 @@ Network-heavy work is expected only when one of these inputs changes:
 ## Repository Layout
 
 ```text
-iac-laptoplab/
+iac-plh/
 ├── bootstrap/
 ├── docs/
 │   └── architecture.md

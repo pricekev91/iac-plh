@@ -1,5 +1,5 @@
 {
-  "name": "iac-laptoplab",
+  "name": "iac-plh",
   "version": "1.0.0",
   "description": "Infrastructure-as-Code repository for a self-hosted, vendor-agnostic AI appliance built on Linux hosts, LXD system containers, and local model serving.",
   "main": "index.js",

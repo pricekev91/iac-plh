@@ -1,69 +1,28 @@
-name: engine
-project: prod
-variant:
-  default: cpu
-  supported:
-    - cpu
-    - nvidia
-    - amd
-  select_from: host.gpu
-
-container:
+engine:
+  project: prod
   name: engine
+  hostname: engine
   image: ubuntu:24.04
-  profiles:
-    - default
-    - gpu
-  mounts:
-    - host: "{{ host.model_dir }}"
-      container: /models
-      readonly: true
-  env:
-    AI_ENGINE_HOST: 0.0.0.0
-    AI_ENGINE_PORT: "8080"
-    AI_ENGINE_LOCALAI_PORT: "8081"
-    AI_ENGINE_LLAMA_SERVER_PORT: "8082"
-    AI_ENGINE_ADMIN_HOST: 0.0.0.0
-    AI_ENGINE_ADMIN_PORT: "18080"
-    AI_ENGINE_MODEL: /models/{{ host.ai_engine_model }}
-    AI_ENGINE_LOCALAI_IMAGE: localai/localai:latest-aio-cpu
-    OLLAMA_DEFAULT_MODEL: qwen2.5-coder:7b
-  command: >
-    /usr/local/bin/ai-engine
+  cores: 12
+  memory_mb: 49152
+  enable_gpu: true
+  webui_port: 8080
+  localai_port: 8081
+  default_model: qwopus3.6-35b-a3b-v1
+  default_model_url: ""
+  default_model_path: /srv/ai/models/llama-cpp/models/Qwopus3.6-35B-A3B-v1-GGUF/Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf
+  pull_default_model: false
+  llama_context_size: 32768
+  llama_gpu_layers: 60
+  llama_threads: 8
+  llama_batch_size: 512
+  llama_parallel: 2
+  llama_flash_attn: true
+  llama_no_mmap: false
+  llama_mlock: false
+  llama_cache_type: q4_0
 
-runtime:
-  service_name: ai-engine
-  install_script: scripts/provision-ai-engine.bash
-
-# LXD Configuration
-limits:
-  cpu: "12"
-  memory: 49152MiB
-
-devices:
-  gpu:
-    type: gpu
-  root:
-    type: disk
-    pool: default
-    path: /
-    size: 96GB
-
-# LXD doesn't have 'onboot' or 'startup' like Proxmox.
-# Containers start immediately upon creation.
-# Security nesting is enabled for tools like Docker if needed.
-security:
-  nesting: true
-ports:
-  - host: 8080
-    container: 8080
-    bind_local_only: true
-  - host: 8081
-    container: 8081
-    bind_local_only: true
-  - host: 8082
-    container: 8082
-    bind_local_only: true
-  - host: 18080
-    container: 18080
-    bind_local_only: true
+storage:
+  models_host_path: /srv/ai/models
+  state_host_path: /srv/ai/state
+  scratch_host_path: /srv/ai/scratch

@@ -1,71 +1,33 @@
-# Architecture
+# iac-plh Architecture
 
-## 1. Project Vision
+## 1. Executive Intent
 
-### 1.1 Purpose
+`iac-plh` brings the Infrastructure-as-Code design and operational patterns from `iac-hlh` (the Proxmox-based home lab host) to a personal laptop environment running CachyOS with LXD.
 
-Build a self-hosted, vendor-agnostic AI appliance that provides local LLM inference, UI access, agentic access, future orchestration, and supporting tooling across multiple machines using reproducible Infrastructure-as-Code.
+Its strategic purpose is to provide:
 
-### 1.2 Requirements
+- **identical end-user experience** as `iac-hlh` (LocalAI + llama.cpp on port 8080, no separate WebUIs)
+- **GPU-accelerated inference** using an NVIDIA RTX 2060M
+- **portable, reproducible infrastructure** leveraging the same operator workflow and governance patterns
+- **network-accessible service** for local development and testing with ChromeBooks and peer devices
 
-The system must:
+## 2. Current-State Summary
 
-- Operate fully offline during real-world use after an online build, update, and preload phase
-- Avoid paid AI services
-- Be hardware-agnostic across supported CPU and GPU combinations
-- Be reproducible, auditable, and long-lived
-- Support snapshots and rollback as first-class lifecycle operations
-- Require idempotent bootstrap and apply workflows, or explicit prerequisite failures when idempotency cannot be achieved automatically
+### Active In Production
 
-### 1.3 Long-Term Objective
+- CachyOS Arch Linux host with LXD daemon
+- `engine` LXC (privileged container)
+- Native `LocalAI` with `llama-cpp` backend
+- `nginx` reverse proxy
+- Persistent host mounts for model/state/scratch
+- NVIDIA RTX 2060M GPU passthrough via LXD device mapping
+- DHCP/NAT networking with port 8080 published to host interface
 
-A portable, deterministic AI platform that can:
+### Not Active
 
-- Bootstrap on any compatible host
-- Migrate across hardware generations
-- Extend with new models, UIs, and tooling
-- Maintain stability with minimal drift
-
-## 2. High-Level Architecture
-
-### 2.1 Logical Layers
-
-- Host Layer: Minimal OS plus LXD substrate
-- Platform Layer: LXD project `prod` today, with optional future `dev`
-- Service Layer: Containers providing inference, presentation, orchestration, and agentic services
-- Client Layer: Editors, browsers, and CLI tools consuming API and UI endpoints
-
-### 2.2 Physical Layout
-
-Initial host:
-
-- Alienware M17 R2 running CachyOS or another Arch-family distribution
-
-Future hosts:
-
-- MINISFORUM N5 Pro running Proxmox or Debian-family Linux
-- Additional compatible hosts
-
-Each host runs:
-
-- Arch-family Linux or Debian/Proxmox
-- LXD daemon
-- IaC-driven configuration
-
-### 2.3 Component Relationships
-
-- Host OS -> LXD
-- LXD -> Projects
-- Projects -> Containers
-- Containers -> Shared model storage
-- Clients -> API and UI endpoints
-
-### 2.4 Data Flow
-
-1. Client sends prompt.
-2. API container loads the configured model.
-3. GPU or CPU performs inference.
-4. Response is returned to the client.
+- Separate presentation/OpenWebUI containers
+- Orchestrator and agents slices
+- Multi-project expansion
 
 ## 3. Technology Stack
 

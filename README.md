@@ -1,103 +1,150 @@
 # iac-plh
 
-Infrastructure-as-Code repository for a self-hosted, vendor-agnostic AI appliance built on Linux hosts, LXD system containers, and local model serving.
+Infrastructure-as-Code repository for a portable, self-hosted AI appliance on a personal laptop using CachyOS + LXD.
 
-The previous Windows 11 and WSL-focused implementation has been archived in git and is intentionally not carried forward on `main`.
+This repository brings the design and operational patterns from `iac-hlh` (Proxmox-based HLH host) to a laptop environment, replacing Proxmox with LXD for container management and targeting local inference with NVIDIA GPU acceleration.
 
-## Goal
+## Executive Summary
 
-Build toward an LXD-based deployment model where the AI stack is split into separate containers by responsibility:
+As of May 2026, `iac-plh` provides a **single shared AI runtime** on a CachyOS laptop:
 
-- LLM engine container for GPU-backed `llama.cpp` inference, API serving, and built-in WebUI access
-- Orchestrator container for workflow automation
-- Agent container for editor and automation-facing workflows
+- `engine` LXC (privileged container, DHCP/NAT networking)
+- Native `LocalAI` service with `llama-cpp` backend
+- `nginx` reverse proxy for LocalAI UI/API exposure on port `8080`
+- Host-mounted model/state/scratch paths for persistent operation
+- NVIDIA RTX 2060M GPU passthrough via LXD device mapping
 
-The intended direction is to keep these services loosely coupled, inventory-driven, and replaceable independently during rollout.
+This design preserves the same **end-user experience** as `iac-hlh` (LocalAI on 8080, no separate WebUIs), while adapting the control plane from Proxmox to LXD.
 
-Current naming contract:
+## Scope And Governance Boundary
 
-- projects represent environments; today the inventory targets only `prod`
-- platform and container names represent service roles: `engine`, `orchestrator`, `agents`
+`iac-plh` owns:
 
-Operationally, the end-state should feel like one command from a fresh host, while still being implemented as modular scripts underneath:
+- CachyOS LXD initialization and setup
+- LXC lifecycle reconciliation (launch/config/start/provision)
+- Host storage and bind-mount contracts
+- Network DHCP/NAT and port publishing policy
+- shared AI appliance deployment and guardrails
+- NVIDIA GPU device passthrough configuration
 
-- `bootstrap/<os>.bash` prepares a clean host, installs and initializes LXD, and establishes the host prerequisites
-- `apply.bash` validates the host state, invokes the OS bootstrap path when first-run LXD prerequisites are missing, and then reconciles the LXD projects, profiles, containers, mounts, and service wiring
-- the top-level workflow should be safe to rerun, with bootstrap handling first-time host preparation and apply handling ongoing reconciliation
+`iac-plh` does not own:
 
-Idempotency is a design requirement for both layers:
+- application business logic or integration code
+- product-specific prompts, schemas, or dashboards
+- application-specific compose stacks
 
-- bootstrap must be safe to rerun on a partially prepared host and either converge cleanly or fail with an explicit prerequisite error
-- apply must be safe to rerun against an already bootstrapped host and converge the declared LXD state without hidden one-time assumptions
-- runtime provisioning inside containers must reuse installed packages, source trees, and built artifacts whenever the declared inputs have not changed
+## Current State (Verified)
 
-## Current Scope
+The active reconciliation path is:
 
-- Linux host bootstrap for Arch-family and Debian-family systems
-- LXD projects with a single active `prod` environment and optional future expansion
-- Declarative platform definitions for engine, orchestrator, and agent services
-- Inventory-driven provisioning with deterministic, auditable state
-- Idempotent bootstrap and apply behavior as a first-class requirement
-- Offline-first operation, with explicit handling for mirrored artifacts and model storage
+1. `./apply.bash --plan inventory/alienware-m17r2.yaml`
+2. `./apply.bash inventory/alienware-m17r2.yaml`
 
-## Rerun Contract
+`apply.bash` currently reconciles only the shared `engine` stack using LXD and `lxc` CLI commands.
 
-Normal reruns should be fast and boring:
+### Runtime Contract
 
-- unchanged projects, profiles, devices, environment, and proxy bindings are left in place
-- unchanged containers are not replaced
-- unchanged runtime installers are not supposed to redownload packages or source archives
-- unchanged services are not supposed to be rebuilt or restarted just because `apply.bash` ran again
+- UI/API endpoint: `http://127.0.0.1:8080` (accessible on local network via host IP)
+- Direct LocalAI endpoint: `http://127.0.0.1:8081`
+- OpenAI-compatible API base: `http://127.0.0.1:8081/v1/`
+- Model configs: `/srv/ai/models/*.yaml`
+- Persistent host mounts:
+  - `/srv/ai/models` -> `/srv/ai/models`
+  - `/srv/ai/state` -> `/srv/ai/state`
+  - `/srv/ai/scratch` -> `/srv/ai/scratch`
 
-Network-heavy work is expected only when one of these inputs changes:
+### Capacity Profile (Current Inventory)
 
-- the platform definition changes in a way that alters desired container state
-- the runtime install script changes
-- the runtime service is missing, failed, or otherwise unhealthy and must be repaired
-- the target container has never completed its first successful provisioning run
+- CPU: 12 cores
+- memory: 48 GiB
+- privileged LXC with nesting/keyctl enabled
+- NVIDIA RTX 2060M GPU with 4 GiB VRAM
+- GPU layers: 60 (optimized for 2060M)
+
+## Layered Architecture (Text Diagram)
+
+```text
+Layer 5 - Client Applications / Browsers
+  - ChromeBooks, laptops access LocalAI at port 8080
+  - No direct ownership of host/LXC mechanics
+
+Layer 4 - Shared Service Contract
+  - Engine endpoint contract (8080/8081)
+  - Model and inference tuning contract via YAML
+  - Runtime health and readiness expectations
+
+Layer 3 - Application Runtime (Inside engine LXC)
+  - LocalAI binary + llama-cpp backend
+  - CUDA-capable inference using RTX 2060M
+  - nginx reverse proxy
+  - systemd-managed services and readiness checks
+
+Layer 2 - Infrastructure Reconciliation (CachyOS Host + LXD)
+  - apply.bash parses platform + inventory YAML
+  - lxc launch/config/start + mount/device orchestration
+  - provisioning script push/exec and safety guardrails
+
+Layer 1 - Physical/Host Foundation (Laptop)
+  - CachyOS Arch Linux with LXD daemon
+  - NVIDIA drivers and GPU binding
+  - shared LXD storage and networking bridge
+```
+
+## Control And Data Flow (Text Diagram)
+
+```text
+Operator/User
+  |
+  |  ./apply.bash [--plan] inventory/alienware-m17r2.yaml
+  v
+CachyOS Host (with LXD daemon)
+  |
+  |-- lxc launch (LXC container creation)
+  |-- lxc config set (CPU/memory limits)
+  |-- lxc config device add (mounts + GPU)
+  |-- lxc start (container boot)
+  |-- lxc file push + lxc exec (provision-ai-appliance.bash)
+  v
+Engine LXC (DHCP-bridged, port 8080 published to host)
+  |
+  |-- local-ai service (port 8081, CUDA-accelerated)
+  |-- nginx proxy (port 8080)
+  |-- /srv/ai/models/*.yaml inference config
+  v
+Local Network / Client Browsers / ChromeBooks
+  |
+  |-- HTTP requests to 192.168.x.y:8080 (host IP)
+  |-- OpenAI-compatible requests -> /v1/*
+  |-- receive local GPU-accelerated inference responses
+```
 
 ## Repository Layout
 
 ```text
 iac-plh/
-├── bootstrap/
-├── docs/
-│   └── architecture.md
+├── apply.bash                        # LXD reconciliation operator
 ├── inventory/
+│   └── alienware-m17r2.yaml          # Laptop-specific desired state
 ├── platforms/
-├── profiles/
+│   └── engine.yaml                   # Shared AI runtime baseline
 ├── scripts/
-├── apply.bash
-└── README.md
+│   └── provision-ai-appliance.bash   # In-container provisioning
+├── bootstrap/
+│   └── arch-cachyos.bash             # Initial CachyOS LXD setup
+└── docs/
+    ├── architecture.md
+    └── README.md
 ```
 
-## Starting Point
+## Operational Notes For Leadership
 
-The architectural baseline lives in `docs/architecture.md`.
+- **Current maturity**: production-capable single-engine LXC with NVIDIA acceleration and reconciliation.
+- **Portability**: same operator workflow and end-user contract as `iac-hlh`, but adapted to LXD/CachyOS.
+- **GPU acceleration**: optimized for NVIDIA RTX 2060M with tunable GPU layer count and inference parameters.
+- **Network accessibility**: container exposed via DHCP/NAT with port publishing, making the service accessible from other devices on the local network.
+- **Governance model**: strict separation between host infrastructure ownership (`iac-plh`) and application repository ownership.
 
-The current prod endpoint inventory, including canonical host URLs and observed live container addresses, lives in `docs/architecture.md#44-current-prod-endpoint-inventory`.
-
-Current local service URLs:
-
-- Open WebUI: `http://127.0.0.1:3000` when the engine backend is `ollama`
-- AI Engine appliance UI and API: `http://127.0.0.1:8080`
-- n8n: `http://127.0.0.1:5678`
-- Agents: `http://127.0.0.1:7788`
-
-Current architecture direction as of 2026-04-29:
-
-- `engine` is the primary local AI appliance surface and can be reconciled as either `llama.cpp` or `ollama` behind the same container and host port contract
-- when the selected engine backend is `ollama`, apply also reconciles a separate `presentation` container running Open WebUI on host port `3000`
-- `orchestrator` talks directly to the engine OpenAI-compatible endpoint
-- `agents` remains a separate automation-facing service
-
-Seed files included now:
-
-- `bootstrap/arch-cachyos.bash`
-- `inventory/alienware-m17r2.yaml`
-- `platforms/engine.yaml`
-- `platforms/presentation.yaml`
-- `platforms/orchestrator.yaml`
+For detailed architecture, operating model, and risk posture, see `docs/architecture.md`.
 - `platforms/agents.yaml`
 - `scripts/provision-ai-engine.bash`
 - `scripts/provision-openwebui.bash`

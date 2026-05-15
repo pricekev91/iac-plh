@@ -1,27 +1,34 @@
 host:
-  id: alienware-m17r2
-  os: arch
-  gpu: nvidia
-  cpu: intel
-  ram_gb: 32
-  storage_root: /srv
-  model_dir: /srv/models
-  ai_engine_model: DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf
+  name: alienware-m17r2
+  address: 127.0.0.1
 
-projects:
-  - prod
+lxd:
+  project: prod
 
-project_migrations:
-  - from: ai-infra
-    to: prod
-  - from: ai-dev
-    to: prod
-  - from: dev
-    to: prod
+storage:
+  models_host_path: /srv/ai/models
+  state_host_path: /srv/ai/state
+  scratch_host_path: /srv/ai/scratch
 
-platforms:
-  - engine
-
-network:
-  expose_ui: false
-
+engine:
+  name: engine
+  hostname: engine
+  image: ubuntu:24.04
+  cores: 12
+  memory_mb: 49152
+  enable_gpu: true
+  webui_port: 8080
+  localai_port: 8081
+  default_model: qwopus3.6-35b-a3b-v1
+  default_model_url: ""
+  default_model_path: /srv/ai/models/llama-cpp/models/Qwopus3.6-35B-A3B-v1-GGUF/Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf
+  pull_default_model: false
+  llama_context_size: 32768
+  llama_gpu_layers: 60
+  llama_threads: 8
+  llama_batch_size: 512
+  llama_parallel: 2
+  llama_flash_attn: true
+  llama_no_mmap: false
+  llama_mlock: false
+  llama_cache_type: q4_0

@@ -3,5 +3,7 @@ config:
 description: NVIDIA GPU passthrough profile for inference containers
 devices:
   gpu:
+    gputype: physical
     type: gpu
+    vendorid: "10de"
 name: gpu-nvidia

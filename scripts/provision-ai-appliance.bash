@@ -196,23 +196,28 @@ set -euo pipefail
 install -d -m 0755 /srv/ai/state/localai/data /srv/ai/state/localai/backends
 export LLAMACPP_PARALLEL="${AI_ENGINE_LLAMA_PARALLEL:-1}"
 
-# For the 2060M profile, require NVIDIA tooling and expose CUDA device selection.
-if [[ "${AI_ENGINE_REQUIRE_NVIDIA,,}" == "true" ]] && ! command -v nvidia-smi >/dev/null 2>&1; then
-  echo "ERROR: NVIDIA tooling (nvidia-smi) is required but unavailable." >&2
-  exit 1
-fi
-
 if [[ "${AI_ENGINE_REQUIRE_NVIDIA,,}" == "true" ]]; then
-  gpu_inventory="$(nvidia-smi -L 2>/dev/null || true)"
-  if [[ -z "$gpu_inventory" ]]; then
-    echo "ERROR: NVIDIA GPU is required but no GPU inventory was detected." >&2
-    exit 1
-  fi
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    gpu_inventory="$(nvidia-smi -L 2>/dev/null || true)"
+    if [[ -z "$gpu_inventory" ]]; then
+      echo "ERROR: NVIDIA GPU is required but no GPU inventory was detected." >&2
+      exit 1
+    fi
 
-  if [[ -n "${AI_ENGINE_NVIDIA_GPU_NAME:-}" ]] && ! grep -Fqi -- "${AI_ENGINE_NVIDIA_GPU_NAME}" <<<"$gpu_inventory"; then
-    echo "ERROR: Required GPU '${AI_ENGINE_NVIDIA_GPU_NAME}' was not detected." >&2
-    echo "Detected GPUs: ${gpu_inventory}" >&2
-    exit 1
+    if [[ -n "${AI_ENGINE_NVIDIA_GPU_NAME:-}" ]] && ! grep -Fqi -- "${AI_ENGINE_NVIDIA_GPU_NAME}" <<<"$gpu_inventory"; then
+      echo "ERROR: Required GPU '${AI_ENGINE_NVIDIA_GPU_NAME}' was not detected." >&2
+      echo "Detected GPUs: ${gpu_inventory}" >&2
+      exit 1
+    fi
+  else
+    if ! ls /dev/nvidia[0-9]* >/dev/null 2>&1; then
+      echo "ERROR: NVIDIA GPU device nodes are missing and nvidia-smi is unavailable." >&2
+      exit 1
+    fi
+
+    if [[ -n "${AI_ENGINE_NVIDIA_GPU_NAME:-}" ]]; then
+      echo "WARNING: nvidia-smi unavailable; skipping strict GPU model check for '${AI_ENGINE_NVIDIA_GPU_NAME}'." >&2
+    fi
   fi
 fi
 

@@ -13,7 +13,7 @@ container:
       readonly: true
   env:
     AI_ENGINE_WEBUI_PORT: "8080"
-    AI_ENGINE_LOCALAI_PORT: "8081"
+    AI_ENGINE_LOCALAI_PORT: "8080"
     AI_ENGINE_DEFAULT_MODEL: qwopus3.6-35b-a3b-v1
     AI_ENGINE_DEFAULT_MODEL_URL: ""
     AI_ENGINE_DEFAULT_MODEL_PATH: /srv/ai/models/llama-cpp/models/Qwopus3.6-35B-A3B-v1-GGUF/Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf

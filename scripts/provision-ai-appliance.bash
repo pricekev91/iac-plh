@@ -252,13 +252,11 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable nginx
   systemctl enable ai-engine-localai.service
 }
 
 start_services() {
   systemctl restart ai-engine-localai.service
-  systemctl restart nginx
 }
 
 pull_default_model_if_requested() {
@@ -313,7 +311,7 @@ main() {
   require_root
 
   export AI_ENGINE_WEBUI_PORT="${AI_ENGINE_WEBUI_PORT:-8080}"
-  export AI_ENGINE_LOCALAI_PORT="${AI_ENGINE_LOCALAI_PORT:-8081}"
+  export AI_ENGINE_LOCALAI_PORT="${AI_ENGINE_LOCALAI_PORT:-8080}"
   export AI_ENGINE_DEFAULT_MODEL="${AI_ENGINE_DEFAULT_MODEL:-tinyllama-1.1b-chat-v1.0}"
   export AI_ENGINE_DEFAULT_MODEL_URL="${AI_ENGINE_DEFAULT_MODEL_URL:-https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf}"
   export AI_ENGINE_DEFAULT_MODEL_PATH="${AI_ENGINE_DEFAULT_MODEL_PATH:-/srv/ai/models/default.gguf}"
@@ -339,8 +337,7 @@ main() {
   log "Writing LocalAI model config"
   write_localai_model_config
 
-  log "Writing nginx config and service definitions"
-  write_nginx_config
+  log "Writing service definitions"
   write_localai_wrapper
   write_services
 

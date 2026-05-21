@@ -1,0 +1,30 @@
+name: llama-direct
+project: llama
+
+container:
+  name: llama
+  image: ubuntu:24.04
+  profiles:
+    - default
+    - gpu
+  mounts:
+    - host: /usr/lib
+      container: /opt/host-lib
+      readonly: true
+  env:
+    LLAMA_MODEL_URL: https://huggingface.co/FullnameNameUser/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF/resolve/main/qwen2.5-7b-instruct-1m-q4_k_m.gguf
+    LLAMA_MODEL_PATH: /srv/ai/state/models/qwen2.5-7b-instruct-1m-q4_k_m.gguf
+    LLAMA_CTX_SIZE: "100000"
+    LLAMA_THREADS: "8"
+    LLAMA_GPU_LAYERS: "60"
+    LLAMA_PORT: "8080"
+  command: /usr/local/bin/llama-server-start
+
+runtime:
+  service_name: llama-server
+  install_script: scripts/provision-llama-direct.bash
+
+ports:
+  - host: 8090
+    container: 8080
+    bind_local_only: false

@@ -1,5 +1,4 @@
 config:
-  nvidia.runtime: "true"
 description: NVIDIA GPU passthrough profile for inference containers
 devices:
   gpu:

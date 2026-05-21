@@ -1,0 +1,15 @@
+host:
+  id: alienware-m17r2
+  os: cachyos
+  gpu: nvidia
+  model_dir: /home/pricekev/ai/models
+  ai_engine_model: qwen2.5-7b-instruct-1m-q4_k_m.gguf
+
+projects:
+  - llama
+
+platforms:
+  - llama-direct
+
+network:
+  expose_ui: true

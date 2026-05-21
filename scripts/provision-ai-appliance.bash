@@ -202,6 +202,20 @@ if [[ "${AI_ENGINE_REQUIRE_NVIDIA,,}" == "true" ]] && ! command -v nvidia-smi >/
   exit 1
 fi
 
+if [[ "${AI_ENGINE_REQUIRE_NVIDIA,,}" == "true" ]]; then
+  gpu_inventory="$(nvidia-smi -L 2>/dev/null || true)"
+  if [[ -z "$gpu_inventory" ]]; then
+    echo "ERROR: NVIDIA GPU is required but no GPU inventory was detected." >&2
+    exit 1
+  fi
+
+  if [[ -n "${AI_ENGINE_NVIDIA_GPU_NAME:-}" ]] && ! grep -Fqi -- "${AI_ENGINE_NVIDIA_GPU_NAME}" <<<"$gpu_inventory"; then
+    echo "ERROR: Required GPU '${AI_ENGINE_NVIDIA_GPU_NAME}' was not detected." >&2
+    echo "Detected GPUs: ${gpu_inventory}" >&2
+    exit 1
+  fi
+fi
+
 if command -v nvidia-smi >/dev/null 2>&1; then
   export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 fi

@@ -120,21 +120,6 @@ ensure_proxy_device() {
         --project "$PROJECT"
 }
 
-ensure_nvidia_libs_mount() {
-    local dev_name="nvidia-libs"
-    local host_libs="/usr/lib"
-
-    if device_exists "$dev_name"; then
-        log "NVIDIA libs mount already present: $dev_name"
-        return
-    fi
-
-    log "Mount NVIDIA driver libs $host_libs -> /usr/lib in container"
-    lxc config device add "$CT_NAME" "$dev_name" disk \
-        source="$host_libs" path="/usr/lib" \
-        --project "$PROJECT"
-}
-
 ensure_started() {
     local status
     status="$(lxc info "$CT_NAME" --project "$PROJECT" | awk '/^Status:/ {print $2}')"
@@ -150,43 +135,84 @@ exec_in_ct() {
     lxc exec "$CT_NAME" --project "$PROJECT" -- bash -lc "$*"
 }
 
+# Add NVIDIA CUDA APT repository to the container
+# Download from host (container may not have network ready during early boot)
+add_cuda_repo() {
+    local deb_path="/tmp/cuda-keyring.deb"
+
+    # Download keyring on host
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -o "$deb_path" || \
+        fail "Failed to download CUDA keyring from host"
+
+    # Push into container
+    lxc file push "$deb_path" --project "$PROJECT" "$CT_NAME/tmp/cuda-keyring.deb"
+
+    # Install from within container
+    exec_in_ct "dpkg -i /tmp/cuda-keyring.deb && rm -f /tmp/cuda-keyring.deb"
+
+    rm -f "$deb_path"
+}
+
 ensure_llama_cpp_installed() {
     local build_dir="/opt/llama.cpp/build"
     local cmake_cache="/opt/llama.cpp/build/CMakeCache.txt"
     local needs_rebuild=0
+    local ct_cuda_ver=""
+    local required_cuda_ver="12.8"
+
+    # Add CUDA repo if not already present
+    if ! exec_in_ct "[ -f /etc/apt/sources.list.d/cuda.list ]" 2>/dev/null; then
+        add_cuda_repo
+    fi
+
+    # Detect CUDA toolkit version inside container
+    ct_cuda_ver="$(exec_in_ct "nvcc --version 2>/dev/null | grep -oP 'release \K[0-9.]+' || echo ''")"
 
     if exec_in_ct "[ -f '$INSTALL_MARKER' ]"; then
-        # Check if CUDA was enabled in the build by looking for CUDA device nodes
-        # (which would only exist if nvidia-libs mount is active and driver is loaded)
-        if exec_in_ct "test -e /dev/nvidia0 && grep -q 'GGML_CUDA' '$cmake_cache' 2>/dev/null"; then
-            log "llama.cpp already installed with CUDA (marker present, CUDA build detected)"
-            return
+        local marker_ver
+        marker_ver="$(exec_in_ct "cat '$INSTALL_MARKER'" 2>/dev/null)"
+        if [[ "$ct_cuda_ver" != "$required_cuda_ver" ]]; then
+            log "CUDA toolkit version mismatch: container has ${ct_cuda_ver:-none}, need $required_cuda_ver"
+            log "Upgrading CUDA toolkit and rebuilding llama.cpp"
+            needs_rebuild=1
+        elif exec_in_ct "test -e /dev/nvidia0 && grep -q 'GGML_CUDA' '$cmake_cache' 2>/dev/null"; then
+            # Also verify CUDA runtime actually works (not just present)
+            if exec_in_ct "LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/stubs:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH nvcc --version 2>/dev/null" >/dev/null 2>&1; then
+                log "llama.cpp already installed with CUDA $ct_cuda_ver (marker present, CUDA build detected, runtime OK)"
+                return
+            else
+                log "CUDA runtime may not work — rebuilding to be safe"
+                needs_rebuild=1
+            fi
         else
             log "llama.cpp exists but needs CUDA rebuild (no CUDA detected in build)"
             needs_rebuild=1
         fi
     fi
 
-    log "Install dependencies and CUDA toolkit"
-    exec_in_ct "apt-get update && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y git build-essential cmake curl nvidia-cuda-toolkit"
-
     if [[ "$needs_rebuild" -eq 1 ]]; then
-        log "Cleaning old CPU-only build"
-        exec_in_ct "rm -rf '$build_dir'"
+        # Clean old build if CUDA version is changing
+        if [[ "$ct_cuda_ver" != "$required_cuda_ver" ]]; then
+            log "Cleaning old build (CUDA version changing from ${ct_cuda_ver:-unknown} to $required_cuda_ver)"
+            exec_in_ct "rm -rf '$build_dir'"
+        fi
     fi
 
-    log "Build llama.cpp with CUDA"
-    exec_in_ct "
-        mkdir -p /opt && cd /opt && \
-        [ -d llama.cpp ] || git clone https://github.com/ggerganov/llama.cpp.git && \
-        cd llama.cpp && \
-        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && \
-        cmake --build build -j\$(nproc)
-    "
+    log "Installing CUDA toolkit $required_cuda_ver and build deps (host driver needs >= 12.6)"
+     exec_in_ct "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+         cuda-toolkit-$required_cuda_ver cmake build-essential git"
 
-    exec_in_ct "touch '$INSTALL_MARKER'"
-    log "llama.cpp installed with CUDA support"
+     log "Cloning llama.cpp (shallow)"
+     exec_in_ct "mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"
+
+     log "Configuring llama.cpp build with CUDA support"
+     exec_in_ct "cd /opt/llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON"
+
+     log "Building llama.cpp (this may take several minutes) ..."
+     exec_in_ct "cd /opt/llama.cpp && cmake --build build -j\$(nproc)"
+
+     exec_in_ct "echo '$required_cuda_ver' > '$INSTALL_MARKER'"
+     log "llama.cpp installed with CUDA $required_cuda_ver support"
 }
 
 ensure_service_unit() {
@@ -241,7 +267,6 @@ main() {
     ensure_project
     ensure_container
     ensure_gpu_device
-    ensure_nvidia_libs_mount
     ensure_model_mount
     ensure_proxy_device
     ensure_started

@@ -173,11 +173,11 @@ WantedBy=multi-user.target
 "
 
     log "Write env file and unit inside CT (idempotent)"
-    exec_in_ct "cat > '$env_path' <<'EOF'
+    exec_in_ct "cat > '$env_path' <<EOF
 $env_content
 EOF"
 
-    exec_in_ct "cat > '$unit_path' <<'EOF'
+    exec_in_ct "cat > '$unit_path' <<EOF
 $unit_content
 EOF"
 

@@ -145,48 +145,46 @@ ensure_service_unit() {
     local unit_path="/etc/systemd/system/${SERVICE_NAME}.service"
     local env_path="/etc/default/${SERVICE_NAME}"
 
-    local env_content
-    env_content="LLAMA_MODEL=\"${MODEL_DIR_CT}/${MODEL_FILE}\"
-LLAMA_BIND_ADDR=\"${CT_LISTEN_ADDR}\"
-LLAMA_BIND_PORT=\"${CT_LISTEN_PORT}\"
-"
+    log "Write env file and unit to container (idempotent)"
 
-    local unit_content
-    unit_content="[Unit]
+    # Write env file via pipe → lxc file push (avoids nested quoting issues).
+    # Host expands variables; systemd EnvironmentFile supports single-quoted values.
+    cat <<ENVEOF | lxc file push - --project "$PROJECT" "$CT_NAME$env_path"
+LLAMA_MODEL='${MODEL_DIR_CT}/${MODEL_FILE}'
+LLAMA_BIND_ADDR='${CT_LISTEN_ADDR}'
+LLAMA_BIND_PORT='${CT_LISTEN_PORT}'
+ENVEOF
+
+    # Write unit file via pipe — quoted heredoc delimiter so ${...} stays literal
+    # (systemd substitutes them at runtime from EnvironmentFile).
+    cat <<'UNITEOF' | lxc file push - --project "$PROJECT" "$CT_NAME$unit_path"
+[Unit]
 Description=llama.cpp server
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=-$env_path
+EnvironmentFile=-/etc/default/llama-server
 WorkingDirectory=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/build/bin/llama-server \\
-  --host ${LLAMA_BIND_ADDR} \\
-  --port ${LLAMA_BIND_PORT} \\
+ExecStart=/opt/llama.cpp/build/bin/llama-server \
+  --host ${LLAMA_BIND_ADDR} \
+  --port ${LLAMA_BIND_PORT} \
   --model ${LLAMA_MODEL}
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-"
-
-    log "Write env file and unit inside CT (idempotent)"
-    exec_in_ct "cat > '$env_path' <<EOF
-$env_content
-EOF"
-
-    exec_in_ct "cat > '$unit_path' <<EOF
-$unit_content
-EOF"
+UNITEOF
 
     log "Reload systemd and enable service"
-    exec_in_ct "systemctl daemon-reload"
-    exec_in_ct "systemctl enable '$SERVICE_NAME'"
+    lxc exec "$CT_NAME" --project "$PROJECT" -- systemctl daemon-reload
+    lxc exec "$CT_NAME" --project "$PROJECT" -- systemctl enable "$SERVICE_NAME"
 
     log "Ensure service is running"
-    exec_in_ct "systemctl restart '$SERVICE_NAME' || systemctl start '$SERVICE_NAME'"
+    lxc exec "$CT_NAME" --project "$PROJECT" -- systemctl restart "$SERVICE_NAME" || \
+    lxc exec "$CT_NAME" --project "$PROJECT" -- systemctl start "$SERVICE_NAME"
 }
 
 main() {

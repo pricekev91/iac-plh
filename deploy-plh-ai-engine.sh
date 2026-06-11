@@ -48,8 +48,24 @@ ct_exists() {
     lxc info "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1
 }
 
+container_is_broken() {
+    # A container is broken if it exists but rootfs is corrupted
+    # (e.g. /sbin/init missing — LXD fails to exec it).
+    if ! ct_exists; then
+        return 1
+    fi
+    # Try starting it briefly; if it aborts, rootfs is broken.
+    lxc start "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1
+    local start_status=$?
+    lxc stop "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1 || true
+    lxc delete --force "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1 || true
+    return $start_status
+}
+
 ensure_container() {
-    if ct_exists; then
+    if container_is_broken; then
+        log "Container rootfs corrupted, recreating from scratch"
+    elif ct_exists; then
         log "Container exists: $PROJECT/$CT_NAME"
         return
     fi
@@ -104,6 +120,21 @@ ensure_proxy_device() {
         --project "$PROJECT"
 }
 
+ensure_nvidia_libs_mount() {
+    local dev_name="nvidia-libs"
+    local host_libs="/usr/lib"
+
+    if device_exists "$dev_name"; then
+        log "NVIDIA libs mount already present: $dev_name"
+        return
+    fi
+
+    log "Mount NVIDIA driver libs $host_libs -> /usr/lib in container"
+    lxc config device add "$CT_NAME" "$dev_name" disk \
+        source="$host_libs" path="/usr/lib" \
+        --project "$PROJECT"
+}
+
 ensure_started() {
     local status
     status="$(lxc info "$CT_NAME" --project "$PROJECT" | awk '/^Status:/ {print $2}')"
@@ -120,25 +151,42 @@ exec_in_ct() {
 }
 
 ensure_llama_cpp_installed() {
+    local build_dir="/opt/llama.cpp/build"
+    local cmake_cache="/opt/llama.cpp/build/CMakeCache.txt"
+    local needs_rebuild=0
+
     if exec_in_ct "[ -f '$INSTALL_MARKER' ]"; then
-        log "llama.cpp already installed (marker present)"
-        return
+        # Check if CUDA was enabled in the build by looking for CUDA device nodes
+        # (which would only exist if nvidia-libs mount is active and driver is loaded)
+        if exec_in_ct "test -e /dev/nvidia0 && grep -q 'GGML_CUDA' '$cmake_cache' 2>/dev/null"; then
+            log "llama.cpp already installed with CUDA (marker present, CUDA build detected)"
+            return
+        else
+            log "llama.cpp exists but needs CUDA rebuild (no CUDA detected in build)"
+            needs_rebuild=1
+        fi
     fi
 
-    log "Install dependencies and llama.cpp"
+    log "Install dependencies and CUDA toolkit"
     exec_in_ct "apt-get update && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y git build-essential cmake curl"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y git build-essential cmake curl nvidia-cuda-toolkit"
 
+    if [[ "$needs_rebuild" -eq 1 ]]; then
+        log "Cleaning old CPU-only build"
+        exec_in_ct "rm -rf '$build_dir'"
+    fi
+
+    log "Build llama.cpp with CUDA"
     exec_in_ct "
         mkdir -p /opt && cd /opt && \
-        git clone https://github.com/ggerganov/llama.cpp.git && \
+        [ -d llama.cpp ] || git clone https://github.com/ggerganov/llama.cpp.git && \
         cd llama.cpp && \
-        cmake -B build -DCMAKE_BUILD_TYPE=Release && \
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && \
         cmake --build build -j\$(nproc)
     "
 
     exec_in_ct "touch '$INSTALL_MARKER'"
-    log "llama.cpp installed"
+    log "llama.cpp installed with CUDA support"
 }
 
 ensure_service_unit() {
@@ -193,6 +241,7 @@ main() {
     ensure_project
     ensure_container
     ensure_gpu_device
+    ensure_nvidia_libs_mount
     ensure_model_mount
     ensure_proxy_device
     ensure_started
@@ -202,6 +251,12 @@ main() {
     log "Done."
     log "From the host, open: http://127.0.0.1/  (Hermes Agent can also use 127.0.0.1:80)"
     log "When you want full GPU for gaming:  lxc stop $CT_NAME --project $PROJECT"
+
+    # Clean up any old container leftovers
+    for old_ct in $(lxc list --project "$PROJECT" -c n --format csv | grep -v "^${CT_NAME}$"); do
+        log "Cleaning up old container: $old_ct"
+        lxc delete --force "$old_ct" --project "$PROJECT"
+    done
 }
 
 main "$@"

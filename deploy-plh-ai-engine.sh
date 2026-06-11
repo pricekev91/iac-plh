@@ -203,13 +203,13 @@ ensure_llama_cpp_installed() {
          cuda-toolkit-$required_cuda_ver cmake build-essential git"
 
      log "Cloning llama.cpp (shallow)"
-     exec_in_ct "mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"
+     exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"
 
      log "Configuring llama.cpp build with CUDA support"
-     exec_in_ct "cd /opt/llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON"
+     exec_in_ct "export PATH=/usr/local/cuda/bin:$PATH && cd /opt/llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON"
 
      log "Building llama.cpp (this may take several minutes) ..."
-     exec_in_ct "cd /opt/llama.cpp && cmake --build build -j\$(nproc)"
+     exec_in_ct "export PATH=/usr/local/cuda/bin:$PATH && cd /opt/llama.cpp && cmake --build build -j$(nproc)"
 
      exec_in_ct "echo '$required_cuda_ver' > '$INSTALL_MARKER'"
      log "llama.cpp installed with CUDA $required_cuda_ver support"

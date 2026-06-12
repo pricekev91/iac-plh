@@ -121,16 +121,10 @@ ensure_proxy_device() {
 }
 
 ensure_cuda_driver_lib() {
-    if device_exists "cuda-drivers"; then
-        log "CUDA driver lib mount already present: cuda-drivers"
-        return
-    fi
-
-    log "Mount NVIDIA CUDA driver libs into container"
-    lxc config device add "$CT_NAME" cuda-drivers disk \
-        source="/usr/lib" path="/usr/local/lib" \
-        --project "$PROJECT"
-    # Hot-plug works on btrfs — no restart needed
+    # No mount needed — cuda-compat-12-8 (installed via apt) already provides
+    # libnvidia-*.so.* runtime libraries inside the container.
+    # Mounting host /usr/lib would conflict with container libs → segfaults.
+    log "CUDA driver libs provided by cuda-compat-12-8 package inside container (no mount needed)"
 }
 
 ensure_started() {
@@ -246,10 +240,13 @@ ensure_llama_cpp_installed() {
 
     # cuda-toolkit-12-8 is a huge meta-package that pulls in nsight-systems,
     # GTK3, Java runtime, X11 tools as direct dependencies — all segfaulting.
-    # Install only what llama.cpp needs: nvcc (compiler) + CUDA runtime headers.
+    # Install only what llama.cpp needs: nvcc (compiler) + CUDA runtime + cuBLAS.
+    # Note: apt packages use dash-separated versions (cuda-nvcc-12-8), not dots.
+    local cuda_pkg_ver="${required_cuda_ver//./-}"
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-         cuda-nvcc-$required_cuda_ver cuda-cudart-dev-$required_cuda_ver \
-         cuda-compat-$required_cuda_ver cmake build-essential git" || true
+         cuda-nvcc-$cuda_pkg_ver cuda-cudart-dev-$cuda_pkg_ver \
+         cuda-cublas-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
+         cmake build-essential git" || true
 
      log "Cloning llama.cpp (shallow)"
      exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"

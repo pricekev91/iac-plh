@@ -120,6 +120,21 @@ ensure_proxy_device() {
         --project "$PROJECT"
 }
 
+ensure_cuda_driver_lib() {
+    if device_exists "cuda-drivers"; then
+        log "CUDA driver lib mount already present: cuda-drivers"
+        return
+    fi
+
+    log "Mount host CUDA driver lib into container"
+    lxc config device add "$CT_NAME" cuda-drivers disk \
+        source="/usr/lib" path="/usr/lib" \
+        --project "$PROJECT"
+    # Restart needed for disk mounts to take effect
+    log "Restarting container to apply CUDA driver mount"
+    lxc restart "$CT_NAME" --project "$PROJECT"
+}
+
 ensure_started() {
     local status
     status="$(lxc info "$CT_NAME" --project "$PROJECT" | awk '/^Status:/ {print $2}')"
@@ -267,6 +282,7 @@ main() {
     ensure_project
     ensure_container
     ensure_gpu_device
+    ensure_cuda_driver_lib
     ensure_model_mount
     ensure_proxy_device
     ensure_started

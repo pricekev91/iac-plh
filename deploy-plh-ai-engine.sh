@@ -130,10 +130,7 @@ ensure_cuda_driver_lib() {
     lxc config device add "$CT_NAME" cuda-drivers disk \
         source="/usr/lib" path="/usr/local/lib" \
         --project "$PROJECT"
-    # Restart needed for disk mounts to take effect
-    log "Restarting container to apply CUDA driver mount"
-    lxc restart "$CT_NAME" --project "$PROJECT" 2>/dev/null || \
-        lxc start "$CT_NAME" --project "$PROJECT"
+    # Hot-plug works on btrfs — no restart needed
 }
 
 ensure_started() {

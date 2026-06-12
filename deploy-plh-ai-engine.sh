@@ -238,15 +238,14 @@ ensure_llama_cpp_installed() {
 
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get update"
 
-    # cuda-toolkit-12-8 is a huge meta-package that pulls in nsight-systems,
-    # GTK3, Java runtime, X11 tools as direct dependencies — all segfaulting.
-    # Install only what llama.cpp needs: nvcc (compiler) + CUDA runtime + cuBLAS.
-    # Note: apt packages use dash-separated versions (cuda-nvcc-12-8), not dots.
+    # Install full cuda-toolkit meta-package — provides nvcc, CUDA runtime,
+    # cuBLAS, driver API stubs, and all the dev headers needed by llama.cpp.
+    # The individual packages (cuda-nvcc, cuda-cudart-dev, libcublas-dev) are
+    # missing driver API symbols (cuGetErrorString) that cause linker errors.
+    # --no-install-recommends keeps it lean (no nsight/GTK3/Java).
     local cuda_pkg_ver="${required_cuda_ver//./-}"
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-         cuda-nvcc-$cuda_pkg_ver cuda-cudart-dev-$cuda_pkg_ver \
-         libcublas-dev-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
-         cmake build-essential git"
+         cuda-toolkit-$cuda_pkg_ver cmake build-essential git"
 
      log "Cloning llama.cpp (shallow)"
      exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"

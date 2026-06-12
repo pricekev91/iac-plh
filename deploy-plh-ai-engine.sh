@@ -121,10 +121,34 @@ ensure_proxy_device() {
 }
 
 ensure_cuda_driver_lib() {
-    # No mount needed — cuda-compat-12-8 (installed via apt) already provides
-    # libnvidia-*.so.* runtime libraries inside the container.
-    # Mounting host /usr/lib would conflict with container libs → segfaults.
-    log "CUDA driver libs provided by cuda-compat-12-8 package inside container (no mount needed)"
+    # The CUDA toolkit inside the container ships only a stub libcuda.so
+    # (in /usr/local/cuda-*/targets/*/lib/stubs/) that lacks Driver API
+    # symbols (cuGetErrorString, cuMemCreate, etc.) needed by llama.cpp at
+    # link time.  Copy the real libcuda.so from the host NVIDIA driver.
+    local host_lib
+    host_lib="$(ls /usr/lib/libcuda.so /usr/lib/x86_64-linux-gnu/libcuda.so 2>/dev/null | head -1)" || true
+    if [[ -z "$host_lib" ]]; then
+        fail "Host libcuda.so not found — install NVIDIA driver (nvidia-driver-*) first"
+    fi
+
+    log "Copying host libcuda.so to container for build-time linking"
+    lxc file push "$host_lib" --project "$PROJECT" "$CT_NAME/usr/lib/$(basename "$host_lib")"
+
+    # Also push the versioned .so.1 if it exists
+    if [[ -e "$(dirname "$host_lib")/libcuda.so.1" ]]; then
+        lxc file push "$(dirname "$host_lib")/libcuda.so.1" --project "$PROJECT" "$CT_NAME/usr/lib/libcuda.so.1"
+    fi
+    # Push the actual versioned binary
+    local libcuda_ver
+    libcuda_ver="$(readlink -f "$host_lib")" || true
+    if [[ -n "$libcuda_ver" && -f "$libcuda_ver" ]]; then
+        lxc file push "$libcuda_ver" --project "$PROJECT" "$CT_NAME/usr/lib/$(basename "$libcuda_ver")"
+    fi
+
+    # Ensure symlink chain is correct inside container
+    exec_in_ct "ln -sf /usr/lib/libcuda.so.1 /usr/lib/libcuda.so 2>/dev/null || true; ldconfig"
+
+    log "Host libcuda.so copied to container"
 }
 
 ensure_started() {

@@ -249,7 +249,7 @@ ensure_llama_cpp_installed() {
     # Install only what llama.cpp needs: nvcc (compiler) + CUDA runtime headers.
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
          cuda-nvcc-$required_cuda_ver cuda-cudart-dev-$required_cuda_ver \
-         cuda-compat-$required_cuda_ver cmake build-essential git"
+         cuda-compat-$required_cuda_ver cmake build-essential git" || true
 
      log "Cloning llama.cpp (shallow)"
      exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"

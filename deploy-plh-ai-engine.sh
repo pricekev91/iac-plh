@@ -262,23 +262,27 @@ ensure_llama_cpp_installed() {
 
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get update"
 
-    # Install full cuda-toolkit meta-package — provides nvcc, CUDA runtime,
-    # cuBLAS, driver API stubs, and all the dev headers needed by llama.cpp.
-    # The individual packages (cuda-nvcc, cuda-cudart-dev, libcublas-dev) are
-    # missing driver API symbols (cuGetErrorString) that cause linker errors.
-    # --no-install-recommends keeps it lean (no nsight/GTK3/Java).
+    # llama.cpp needs: nvcc (compiler), CUDA runtime + cuBLAS dev headers.
+    # The CUDA toolkit stub libcuda.so lacks Driver API symbols needed at link
+    # time — the real libcuda.so is copied from the host in ensure_cuda_driver_lib().
+    # --no-install-recommends avoids nsight/GTK3/Java bloat.
     local cuda_pkg_ver="${required_cuda_ver//./-}"
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-         cuda-toolkit-$cuda_pkg_ver cmake build-essential git"
+         cuda-nvcc-$cuda_pkg_ver cuda-cudart-dev-$cuda_pkg_ver \
+         libcublas-dev-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
+         cmake build-essential git"
 
-     log "Cloning llama.cpp (shallow)"
-     exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"
+    log "Cloning llama.cpp (shallow)"
+    exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"
 
-     log "Configuring llama.cpp build with CUDA support"
-     exec_in_ct "export PATH=/usr/local/cuda/bin:$PATH && cd /opt/llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON"
+    # Pass the real libcuda.so path to cmake so it links against the host driver
+    # library (copied in ensure_cuda_driver_lib) instead of the CUDA toolkit stub
+    # that lacks Driver API symbols.
+    log "Configuring llama.cpp build with CUDA support"
+    exec_in_ct 'export PATH=/usr/local/cuda/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && cd /opt/llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_FLAGS="-L/usr/lib"'
 
-     log "Building llama.cpp (this may take several minutes) ..."
-     exec_in_ct "export PATH=/usr/local/cuda/bin:$PATH && cd /opt/llama.cpp && cmake --build build -j$(nproc)"
+    log "Building llama.cpp (this may take several minutes) ..."
+     exec_in_ct 'export PATH=/usr/local/cuda/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && cd /opt/llama.cpp && cmake --build build -j$(nproc)'
 
      exec_in_ct "echo '$required_cuda_ver' > '$INSTALL_MARKER'"
      log "llama.cpp installed with CUDA $required_cuda_ver support"

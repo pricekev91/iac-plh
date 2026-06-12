@@ -283,10 +283,10 @@ main() {
     ensure_project
     ensure_container
     ensure_gpu_device
-    ensure_cuda_driver_lib
     ensure_model_mount
     ensure_proxy_device
     ensure_started
+    ensure_cuda_driver_lib
     ensure_llama_cpp_installed
     ensure_service_unit
 

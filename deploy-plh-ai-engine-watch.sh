@@ -2,7 +2,7 @@
 set -euo pipefail
 
 LOG="log.txt"
-INTERVAL=90
+INTERVAL=300
 MAX_LOGS=3
 
 # Rotate old logs: keep only MAX_LOGS copies

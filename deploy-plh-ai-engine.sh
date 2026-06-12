@@ -126,9 +126,9 @@ ensure_cuda_driver_lib() {
         return
     fi
 
-    log "Mount host CUDA driver lib into container"
+    log "Mount NVIDIA CUDA driver libs into container"
     lxc config device add "$CT_NAME" cuda-drivers disk \
-        source="/usr/lib" path="/usr/lib" \
+        source="/usr/lib" path="/usr/local/lib" \
         --project "$PROJECT"
     # Restart needed for disk mounts to take effect
     log "Restarting container to apply CUDA driver mount"

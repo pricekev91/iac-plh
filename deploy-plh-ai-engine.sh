@@ -146,9 +146,15 @@ ensure_cuda_driver_lib() {
     fi
 
     # Ensure symlink chain is correct inside container
-    exec_in_ct "ln -sf /usr/lib/libcuda.so.1 /usr/lib/libcuda.so 2>/dev/null || true; ldconfig"
+    # Also REPLACE the CUDA toolkit stub so the build linker doesn't pick it up
+    # (targets/*/lib/stubs/libcuda.so is a no-op stub with zero symbols).
+    exec_in_ct "ln -sf /usr/lib/libcuda.so.1 /usr/lib/libcuda.so 2>/dev/null || true; ldconfig
+      STUB=/usr/local/cuda/targets/x86_64-linux/lib/stubs/libcuda.so
+      if [ -f \"\$STUB\" ]; then
+        ln -sf /usr/lib/libcuda.so.1 \"\$STUB\"
+      fi"
 
-    log "Host libcuda.so copied to container"
+    log "Host libcuda.so copied to container (stub replaced)"
 }
 
 ensure_started() {

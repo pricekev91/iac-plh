@@ -245,7 +245,7 @@ ensure_llama_cpp_installed() {
     local cuda_pkg_ver="${required_cuda_ver//./-}"
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
          cuda-nvcc-$cuda_pkg_ver cuda-cudart-dev-$cuda_pkg_ver \
-         cuda-cublas-dev-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
+         libcublas-dev-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
          cmake build-essential git"
 
      log "Cloning llama.cpp (shallow)"

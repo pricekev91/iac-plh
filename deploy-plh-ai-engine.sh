@@ -151,6 +151,12 @@ exec_in_ct() {
 # Add NVIDIA CUDA APT repository to the container
 # Download from host (container may not have network ready during early boot)
 add_cuda_repo() {
+    # Check if CUDA repo is already configured
+    if ls /etc/apt/sources.list.d/cuda-*.list 1>/dev/null 2>&1; then
+        log "CUDA repo already configured inside container"
+        return 0
+    fi
+
     local deb_path="/tmp/cuda-keyring.deb"
 
     # Download keyring on host
@@ -166,6 +172,21 @@ add_cuda_repo() {
     rm -f "$deb_path"
 }
 
+# Wait for container network to be ready (DHCP + DNS)
+wait_for_network() {
+    local max_wait=60
+    local waited=0
+    while (( waited < max_wait )); do
+        if exec_in_ct "ping -c 1 -W 2 8.8.8.8" >/dev/null 2>&1; then
+            log "Container network is ready (${waited}s)"
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    fail "Container network not ready after ${max_wait}s"
+}
+
 ensure_llama_cpp_installed() {
     local build_dir="/opt/llama.cpp/build"
     local cmake_cache="/opt/llama.cpp/build/CMakeCache.txt"
@@ -173,8 +194,11 @@ ensure_llama_cpp_installed() {
     local ct_cuda_ver=""
     local required_cuda_ver="12.8"
 
+    # Wait for container network before any apt commands
+    wait_for_network
+
     # Add CUDA repo if not already present
-    if ! exec_in_ct "[ -f /etc/apt/sources.list.d/cuda.list ]" 2>/dev/null; then
+    if ! exec_in_ct "ls /etc/apt/sources.list.d/cuda-*.list >/dev/null 2>&1"; then
         add_cuda_repo
     fi
 
@@ -190,7 +214,7 @@ ensure_llama_cpp_installed() {
             needs_rebuild=1
         elif exec_in_ct "test -e /dev/nvidia0 && grep -q 'GGML_CUDA' '$cmake_cache' 2>/dev/null"; then
             # Also verify CUDA runtime actually works (not just present)
-            if exec_in_ct "LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/stubs:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH nvcc --version 2>/dev/null" >/dev/null 2>&1; then
+            if exec_in_ct "LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/stubs:/usr/lib:/usr/local/lib nvcc --version 2>/dev/null" >/dev/null 2>&1; then
                 log "llama.cpp already installed with CUDA $ct_cuda_ver (marker present, CUDA build detected, runtime OK)"
                 return
             else

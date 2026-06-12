@@ -236,7 +236,13 @@ ensure_llama_cpp_installed() {
     fi
 
     log "Installing CUDA toolkit $required_cuda_ver and build deps (host driver needs >= 12.6)"
-     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \
+
+    # Fix any dpkg state from a previous partial failure so the script
+    # is fully idempotent (works on fresh install and after retries).
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true"
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -f -y 2>/dev/null || true"
+
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \
          cuda-toolkit-$required_cuda_ver cmake build-essential git"
 
      log "Cloning llama.cpp (shallow)"

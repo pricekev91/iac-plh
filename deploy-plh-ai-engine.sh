@@ -242,8 +242,14 @@ ensure_llama_cpp_installed() {
     exec_in_ct "DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true"
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -f -y 2>/dev/null || true"
 
-    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \
-         cuda-toolkit-$required_cuda_ver cmake build-essential git"
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get update"
+
+    # cuda-toolkit-12-8 is a huge meta-package that pulls in nsight-systems,
+    # GTK3, Java runtime, X11 tools as direct dependencies — all segfaulting.
+    # Install only what llama.cpp needs: nvcc (compiler) + CUDA runtime headers.
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+         cuda-nvcc-$required_cuda_ver cuda-cudart-dev-$required_cuda_ver \
+         cuda-compat-$required_cuda_ver cmake build-essential git"
 
      log "Cloning llama.cpp (shallow)"
      exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"

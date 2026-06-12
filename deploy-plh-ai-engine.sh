@@ -132,7 +132,8 @@ ensure_cuda_driver_lib() {
         --project "$PROJECT"
     # Restart needed for disk mounts to take effect
     log "Restarting container to apply CUDA driver mount"
-    lxc restart "$CT_NAME" --project "$PROJECT"
+    lxc restart "$CT_NAME" --project "$PROJECT" 2>/dev/null || \
+        lxc start "$CT_NAME" --project "$PROJECT"
 }
 
 ensure_started() {

@@ -278,8 +278,20 @@ ensure_llama_cpp_installed() {
          libcublas-dev-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
          cmake build-essential git"
 
-    log "Cloning llama.cpp (shallow)"
-    exec_in_ct "rm -rf /opt/llama.cpp && mkdir -p /opt && cd /opt && git clone --depth 1 https://github.com/ggerganov/llama.cpp.git"
+    log "Checking latest llama.cpp version on GitHub"
+    GITHUB_LATEST="$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/commits/main 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['sha'][:7], d['commit']['author']['date'][:10])" 2>/dev/null || echo "unknown")"
+    log "Latest on GitHub: ${GITHUB_LATEST}"
+
+    log "Get latest llama.cpp from GitHub"
+    if exec_in_ct "[ -d /opt/llama.cpp/.git ]"; then
+        log "Updating existing llama.cpp to latest main"
+        exec_in_ct "cd /opt/llama.cpp && git fetch origin main && git reset --hard origin/main"
+    else
+        rm -rf /opt/llama.cpp
+        exec_in_ct "mkdir -p /opt && cd /opt && git clone https://github.com/ggerganov/llama.cpp.git"
+    fi
+    LATEST_COMMIT="$(exec_in_ct "cd /opt/llama.cpp && git rev-parse --short HEAD" 2>/dev/null)"
+    log "llama.cpp version: ${LATEST_COMMIT}"
 
     # Pass the real libcuda.so path to cmake so it links against the host driver
     # library (copied in ensure_cuda_driver_lib) instead of the CUDA toolkit stub

@@ -15,6 +15,7 @@ PROXY_DEVICE_NAME="http-local"  # LXD proxy device name
 
 SERVICE_NAME="llama-server"
 INSTALL_MARKER="/root/.llama_cpp_installed"
+SCRIPTS_DIR="$(dirname "$0")/scripts"
 
 # llama-server listens on 127.0.0.1:80 inside the CT,
 # proxied to 127.0.0.1:80 on the host.
@@ -349,6 +350,41 @@ UNITEOF
     lxc exec "$CT_NAME" --project "$PROJECT" -- systemctl start "$SERVICE_NAME"
 }
 
+ensure_switch_model() {
+    # Deploy the fixed switch-model.sh to the container.
+    # The old awk-based version (in the container) had a bug where print
+    # statements used \\\\\\" which produced literal " on each line of
+    # ExecStart, creating a multi-line ExecStart that systemd chokes on:
+    #   ExecStart=/opt/llama.cpp/build/bin/llama-server \"
+    #     --model /path/gguf \"
+    # Each trailing " is parsed as a separate (invalid) argument →
+    # "error: invalid argument: \"". The new version builds a single-line
+    # ExecStart using awk string concatenation (cmd=cmd " --foo") so there
+    # are no stray quotes.
+    local local_script="$SCRIPTS_DIR/switch-model.sh"
+    if [[ ! -f "$local_script" ]]; then
+        log "WARNING: switch-model.sh not found at $local_script, skipping"
+        return 0
+    fi
+
+    local ct_script="/usr/local/bin/switch-model.sh"
+    # Check if we need to update
+    if lxc file read --project "$PROJECT" "$CT_NAME$ct_script" 2>/dev/null | md5sum | grep -q "$(md5sum "$local_script" | cut -d' ' -f1)"; then
+        log "switch-model.sh already up to date in container"
+        return 0
+    fi
+
+    log "Deploying switch-model.sh to container"
+    lxc file push --project "$PROJECT" "$local_script" "$CT_NAME$ct_script"
+    exec_in_ct "chmod +x $ct_script"
+
+    # Also place in /srv/ai/models/ where some tooling expects it
+    lxc file push --project "$PROJECT" "$local_script" "$CT_NAME/srv/ai/models/switch-model.sh"
+    exec_in_ct "chmod +x /srv/ai/models/switch-model.sh"
+
+    log "switch-model.sh deployed"
+}
+
 main() {
     require lxc
 
@@ -361,6 +397,7 @@ main() {
     ensure_cuda_driver_lib
     ensure_llama_cpp_installed
     ensure_service_unit
+    ensure_switch_model
 
     log "Done."
     log "From the host, open: http://127.0.0.1/  (Hermes Agent can also use 127.0.0.1:80)"

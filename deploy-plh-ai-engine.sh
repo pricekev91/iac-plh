@@ -7,7 +7,7 @@ CT_NAME="plh-ai-engine"
 IMAGE="ubuntu:24.04"
 
 MODEL_DIR_HOST="/srv/ai/models"
-MODEL_DIR_CT="/opt/models"
+MODEL_DIR_CT="/srv/ai/models"
 MODEL_FILE="Qwen2.5-7B-Instruct-Q4_K_M.gguf"
 
 GPU_DEVICE_NAME="gpu0"          # LXD gpu device name inside CT
@@ -332,10 +332,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-/etc/default/llama-server
 WorkingDirectory=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/build/bin/llama-server \
-  --host ${LLAMA_BIND_ADDR} \
-  --port ${LLAMA_BIND_PORT} \
-  --model ${LLAMA_MODEL}
+ExecStart=/opt/llama.cpp/build/bin/llama-server --host ${LLAMA_BIND_ADDR} --port ${LLAMA_BIND_PORT} --model ${LLAMA_MODEL}
 Restart=always
 RestartSec=5
 

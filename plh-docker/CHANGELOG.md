@@ -7,9 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Full migration from HLH/Proxmox to PLH/CachyOS/LXD
+- `deploy-hlh-docker.sh` rewritten as `deploy-plh-docker.sh` using LXD instead of Proxmox `pct`
+- `configure-hlh-docker.sh` rewritten for LXD container management
+- Removed all Proxmox-specific references (vmid, prox01, pct, Proxmox API, ZFS pool names)
+- Removed all OpenTofu and Ansible dependencies — pure bash with `lxc` CLI
+- Environment variable prefix changed from `HLH_` to `PLH_`
+
 ### Fixed
 
 - Fix dockhand container port mapping: host 80 maps to container 3000 (dockhand listens on 3000, not 8080)
+
+## [0.3.0] - 2026-06-24
+
+### Changed
+
+- Complete platform migration: Proxmox → LXD, HLH → PLH
+- `deploy-plh-docker.sh`: pure-bash LXD deployment (lxc launch, lxc exec, lxc config)
+- `configure-hlh-docker.sh`: post-deploy config via lxc exec
+- All documentation (README, ADR-001, 90_DONE, 98_README, CHANGELOG) rewritten for PLH/CachyOS/LXD
+- Storage: replaced Proxmox ZFS bind-mounts with LXD device bind-mounts
+- Networking: replaced Proxmox bridge with LXD NAT bridge (lxdbr0)
+
+### Removed
+
+- All Proxmox dependencies (pct, proxmox API, Proxmox templates)
+- All OpenTofu/HCL provisioning
+- All Ansible roles and playbooks
+- `deploy-hlh-docker.sh` (replaced by `deploy-plh-docker.sh`)
+
+### Added
+
+- Pure-bash LXD deployment workflow
+- LXD container lifecycle management (create, start, stop, delete, config)
+- Dockhand container deployment with ZFS-backed persistent data
+- LazyDocker binary installation from GitHub releases
+- Plan mode (`--plan`) for dry-run
+- Nuke mode (`--nuke`) for clean rebuild
+- Configuration via environment variables (`PLH_CORES`, `PLH_MEMORY`, `PLH_DISK`)
 
 ## [0.2.2] - 2026-06
 

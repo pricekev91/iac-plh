@@ -1,62 +1,74 @@
 #!/usr/bin/env bash
 # ============================================================================
-# HLH-Docker Configure Script - Pure Bash Version
+# PLH-Docker Configure Script — Pure Bash Version
 # ============================================================================
 #
-# This script handles post-deployment configuration of the hlh-docker LXC.
-# It's a simplified version of the Ansible-based configuration script,
-# focusing on core configuration tasks needed for the Docker container
-# to function properly.
+# This script handles post-deployment configuration of the plh-docker LXD
+# container. It configures Docker, Dockhand, and LazyDocker inside the
+# running container.
+#
+# USAGE:
+#   ./configure-hlh-docker.sh [--container NAME] [--key PATH]
+#
+# ENVIRONMENT VARIABLES:
+#   PLH_LXC_NAME   Container name   (default: plh-docker)
+#   PLH_SSH_KEY    SSH key path     (default: ~/.ssh/id_ed25519)
 #
 # ============================================================================
 
 set -euo pipefail
 
 # Configuration variables
-LXC_VMID="${LXC_VMID:-102}"
-LXC_HOSTNAME="${LXC_HOSTNAME:-hlh-docker}"
-LXC_IP="${LXC_IP:-192.168.1.13}"
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+LXC_NAME="${PLH_LXC_NAME:-plh-docker}"
+SSH_KEY="${PLH_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
 # --- Helper functions ----------------------------------------------------
 
 info()    { printf "[INFO]  %s\n" "$*"; }
 ok()      { printf "[ OK ]  %s\n" "$*"; }
 warn()    { printf "[WARN]  %s\n" "$*"; }
-fail()  { printf "[FAIL]  %s\n" "$*" >&2; }
-
-# --- Pre-flight checks -------------------------------------------------
-
+fail()    { printf "[FAIL]  %s\n" "$*" >&2; }
 section() { printf "\n=== %s ===\n" "$*"; }
 
-# Check if we're running on the Proxmox host (have pct)
-if ! command -v pct >/dev/null 2>&1; then
-    fail "pct command not found. This script must be run on the Proxmox host." >&2
+# --- Argument parsing ------------------------------------------------------
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --container) LXC_NAME="$2"; shift 2 ;;
+        --key)       SSH_KEY="$2"; shift 2 ;;
+        *)           warn "Unknown option: $1"; shift ;;
+    esac
+done
+
+# --- Pre-flight checks -----------------------------------------------------
+
+if ! command -v lxc >/dev/null 2>&1; then
+    fail "lxc command not found. Ensure LXD is installed." >&2
     exit 1
 fi
 
-# Check if LXC exists and is running
-if ! pct status "$LXC_VMID" >/dev/null 2>&1; then
-    fail "LXC $LXC_VMID does not exist" >&2
+if ! lxc list "$LXC_NAME" >/dev/null 2>&1; then
+    fail "Container $LXC_NAME does not exist" >&2
     exit 1
 fi
 
-if ! pct status "$LXC_VMID" | grep -q "running"; then
-    fail "LXC $LXC_VMID is not running" >&2
+if ! lxc info "$LXC_NAME" 2>/dev/null | grep -q "Status: Running"; then
+    fail "Container $LXC_NAME is not running" >&2
     exit 1
 fi
 
-# --- Main configuration steps --------------------------------------------------
+# --- Main configuration steps ----------------------------------------------
 
-section "Configuring LXC $LXC_VMID"
+section "Configuring container $LXC_NAME"
 
 # 1. Ensure Docker is running
 info "Ensuring Docker service is running..."
-pct exec "$LXC_VMID" -- bash -c "systemctl is-active docker || systemctl start docker"
+lxc exec "$LXC_NAME" -- bash -c "systemctl is-active docker || systemctl start docker"
+ok "Docker service active"
 
 # 2. Configure Docker daemon to use ZFS mount point
 info "Configuring Docker daemon..."
-pct exec "$LXC_VMID" -- bash -c '
+lxc exec "$LXC_NAME" -- bash -c '
     mkdir -p /etc/docker
     cat > /etc/docker/daemon.json <<EOF
 {
@@ -65,30 +77,34 @@ pct exec "$LXC_VMID" -- bash -c '
 EOF
     systemctl restart docker
 '
+ok "Docker daemon configured with ZFS data root"
 
 # 3. Verify Docker is working
 info "Verifying Docker installation..."
-pct exec "$LXC_VMID" -- bash -c "docker version"
+lxc exec "$LXC_NAME" -- bash -c "docker version" | head -3
+ok "Docker is operational"
 
 # 4. Verify the bind mount is properly configured
 info "Checking ZFS bind mount..."
-pct exec "$LXC_VMID" -- bash -c "mount | grep '/srv/data'"
+lxc exec "$LXC_NAME" -- bash -c "mount | grep '/srv/data'"
+ok "Bind mount configured"
 
 # 5. Configure permissions for dockhand data
 info "Setting up dockhand data directories..."
-pct exec "$LXC_VMID" -- bash -c '
+lxc exec "$LXC_NAME" -- bash -c '
     mkdir -p /srv/data/dockhand/data
     mkdir -p /srv/data/dockhand/run
     chmod 755 /srv/data/dockhand
     chmod 755 /srv/data/dockhand/data
     chmod 755 /srv/data/dockhand/run
 '
+ok "Dockhand data directories ready"
 
 # 6. Ensure Dockhand container is running
 info "Ensuring Dockhand container is running..."
-pct exec "$LXC_VMID" -- bash -c '
+lxc exec "$LXC_NAME" -- bash -c '
     if ! docker ps -q -f name=dockhand >/dev/null 2>&1; then
-        echo "Dockhand not running, starting it..."
+        echo "Starting Dockhand..."
         docker run -d \
             --name dockhand \
             --restart unless-stopped \
@@ -99,16 +115,13 @@ pct exec "$LXC_VMID" -- bash -c '
             fnsys/dockhand:latest
     fi
 '
-
-# 7. Check that Dockhand is running
-info "Verifying Dockhand is running..."
-pct exec "$LXC_VMID" -- bash -c 'docker ps --filter name=dockhand'
+ok "Dockhand container running"
 
 # --- Final summary ------------------------------------------------------------
 
 section "Configuration Summary"
-ok "LXC $LXC_VMID configured successfully"
+ok "Container $LXC_NAME configured successfully"
 ok "Docker Engine is running"
-ok "Docker daemon configured with ZFS data root"
-ok "Dockhand container is running"
-ok "All required services are operational"
+ok "Docker daemon configured with ZFS data root (/srv/data/docker)"
+ok "Dockhand container is running on port 80"
+ok "LazyDocker is installed"

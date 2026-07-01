@@ -4,15 +4,16 @@ Active items in progress. These are the current focus areas.
 
 ## Active
 
-- [x] Switch OpenTofu provider from telmate/proxmox to bpg/proxmox (commit 54b7aec)
-- [x] Flatten repository layout to repo root (commit 8ca58d9)
-- [x] Fix fuse feature flag for unprivileged LXC (commit 6cecc14)
-- [x] Fix lazydocker checksum param and version pin (commit 66922b7)
-- [ ] Test full deploy-hlh-docker.sh --apply end-to-end
-- [ ] Verify Dockhand container starts and is reachable on port 80
-- [ ] Validate offline mode (--offline flag) with pre-pinned lazydocker binary
+- [x] Rewrite all artifacts for PLH/CachyOS/LXD (from HLH/Proxmox)
+- [x] Create pure-bash `deploy-plh-docker.sh` with LXD commands
+- [x] Create `configure-hlh-docker.sh` for post-deploy config
+- [x] Test full deploy-plh-docker.sh --apply end-to-end on CachyOS
+- [x] Verify Dockhand container starts and is reachable on port 80
+- [x] Validate LazyDocker installation and functionality
 
 ## This Week
 
-- [ ] Run deploy-hlh-docker.sh --plan against prox01
-- [ ] Plan Uptime Kuma deployment (service stack in iac-hlh)
+- [x] Run deploy-plh-docker.sh --plan on CachyOS host
+- [x] Deploy and verify the container end-to-end
+- [x] Test --nuke mode for clean rebuild
+- [ ] Plan Uptime Kuma deployment (service stack in iac-plh)

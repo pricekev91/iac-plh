@@ -1,0 +1,24 @@
+[Unit]
+Description=llama.cpp AI Engine - llama-server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/ai/models
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/llama.cpp/build/bin/llama-server \
+  --model /dev/null \
+  --host 0.0.0.0 --port 80 \
+  --ctx-size 65536 \
+  -ngl 48 \
+  --batch-size 512 \
+  --flash-attn on \
+  --parallel 1 \
+  --cache-type-k q4_0 \
+  --cache-type-v q4_0
+Restart=on-failure
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

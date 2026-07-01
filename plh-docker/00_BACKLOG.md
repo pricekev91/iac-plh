@@ -5,43 +5,43 @@ in the codebase.
 
 ## Container Host
 
-- Add LXC snapshot before major Docker version updates.
-- Add LXC health check endpoint in configure script.
-- Add automatic LXC restart on crash (systemd watchdog).
-- Add resource quota enforcement (CPU, memory, I/O limits).
-- Add ZFS dataset creation for new app data volumes.
+- Add LXD snapshot before major Docker version updates.
+- Add container health check endpoint in configure script.
+- Add automatic container restart on crash (LXD boot.autostart + systemd watchdog).
+- Add resource quota enforcement (CPU, memory, I/O limits via `lxc config set`).
+- Add ZFS dataset creation for new app data volumes on CachyOS host.
 
 ## Docker Services
 
-- Deploy Uptime Kuma as monitoring service (mentioned in iac-hlh services/).
+- Deploy Uptime Kuma as monitoring service (mentioned in service repos).
 - Add Docker Compose stack for service grouping.
-- Add Docker network creation for per-app segmentation.
-- Implement VLAN-aware networking (ADR-003 placeholder).
+- Implement Docker network creation for per-app segmentation.
+- Add LXD network bridge for per-app IP assignment.
 
 ## Dockhand
 
 - Add Dockhand backup/restore procedure.
 - Add Dockhand configuration export/import.
-- Monitor Dockhand container health (currently done via Ansible assert).
+- Monitor Dockhand container health (currently done via deploy script verify).
 
-## Ansible Improvements
+## Bash Script Improvements
 
-- Add ansible-lint to CI workflow.
-- Split configure role into multiple Ansible roles (docker, dockhand, lazydocker already separated).
-- Add idempotency tests for ansible playbook.
-- Add ansible-galaxy role packaging for reuse.
+- Add shellcheck CI to CI workflow.
+- Add idempotency tests for deploy script.
+- Add `--verbose` flag for detailed logging.
+- Add error handling with rollback on failure.
 
-## OpenTofu
+## LXD Improvements
 
-- Add tofu variables for VLAN tag (currently hardcoded to 0).
-- Add tofu output for container IP address.
-- Add tofu state locking for multi-operator safety.
-- Add tofu data source for Proxmox node validation.
+- Add LXD profile for reusable configuration templates.
+- Add LXD snapshot management before major upgrades.
+- Add LXD backup/restore for the entire container.
+- Add LXD image creation for cached Docker + Dockhand setup.
 
 ## Networking
 
-- Add VLAN-aware bridge configuration per ADR-001.
-- Add per-application IP assignment via VLAN tagging.
+- Add LXD managed network configuration.
+- Add per-application networking via LXD networks.
 - Add Docker network isolation for multi-app deployments.
 
 ## Observability
@@ -54,7 +54,6 @@ in the codebase.
 ## Deployment
 
 - Add pre-flight checks for Docker compatibility on host.
-- Add dry-run / plan mode for deploy script (already exists).
 - Add rollback procedure for failed deployments.
 - Add CI checks for shell scripts (shellcheck).
-- Add SemVer tagging for release history (see backlog: "Adopt SemVer tagging across all repos for rollback safety").
+- Add SemVer tagging for release history.

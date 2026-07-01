@@ -4,7 +4,7 @@ This is what is already implemented and verified in this repository.
 
 ## ADRs
 
-- ADR-001: Container host architecture for HLH (unprivileged LXC, Docker + Dockhand + LazyDocker, vmid 102)
+- ADR-001: Container host architecture for PLH (unprivileged LXD container, Docker + Dockhand + LazyDocker, CachyOS)
 
 ### Fixed
 
@@ -12,90 +12,50 @@ This is what is already implemented and verified in this repository.
 
 ### Added
 
-- Modular orchestrator skeleton under `infra/docker`, `infra/dockhand`, and `infra/k8s`.
-- Shared module placeholders under `infra/modules/logging`, `infra/modules/storage`, and `infra/modules/networking`.
-- Operator scripts `scripts/apply.sh`, `scripts/verify.sh`, and `scripts/destroy.sh`.
-- Configuration defaults file `config/defaults.yaml`.
-- Task tracking docs `TODO.md` and `BACKLOG.md`.
+- Pure-bash deploy script `deploy-plh-docker.sh`: LXD container lifecycle + Docker + Dockhand + LazyDocker
+- Pure-bash configure script `configure-hlh-docker.sh`: post-deploy configuration
+- LXD-based container creation (`lxc launch ubuntu:latest plh-docker`)
+- ZFS bind-mount wiring for `/srv/data` (Docker data + Dockhand data)
+- Dockhand container deployment with data persistence
+- LazyDocker binary installation from GitHub releases
+- Plan mode (`--plan`) for dry-run deployment
+- Nuke mode (`--nuke`) for clean rebuild
+- Environment variable configuration (`PLH_CORES`, `PLH_MEMORY`, `PLH_DISK`, etc.)
 
-## LXC Deployment
+## LXD Container Deployment
 
-- Unprivileged LXC 102 on Proxmox via OpenTofu (bpg/proxmox provider >= 0.66.0)
-- Hostname: `hlh-docker`
-- IP: `192.168.1.13/24`
-- Resources: 4 vCPU, 4096 MB RAM, 1024 MB swap, 32GB rootfs on `RaidZ1-6TB`
-- Features: nesting + keyctl (required for Docker inside LXC)
-- OS: Ubuntu 26.04 LTS (zst template)
-- VLAN-aware networking (tag reserved for future per-app segmentation)
+- Unprivileged LXC `plh-docker` on CachyOS via LXD 6.9
+- Image: Ubuntu (from `ubuntu:latest` LXD remote)
+- Resources: 4 vCPU, 4096 MB RAM, 32GB rootfs (ZFS-backed)
+- Features: `security.nesting=true` (required for Docker inside LXC)
+- Storage: LXD default pool (ZFS)
+- Networking: NAT via lxdbr0, port 80 forwarded to Dockhand
 
-## OpenTofu Module
+## Deployment Scripts
 
-- Proxmox provider: `bpg/proxmox >= 0.66.0`
-- API token or username/password auth
-- Variables for endpoint, credentials, node, ostemplate, cores, memory, network tag
-- Outputs: lxc_vmid, lxc_hostname
-
-## Ansible Roles
-
-### docker-engine
-- Docker GPG key installation and repository setup
-- Installs: docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin
-- Ensures Docker service is enabled and running
-
-### dockhand
-- Pulls `fnsys/dockhand:latest` from Docker Hub
-- Deploys as container with `/srv/dockhand` data persistence
-- Exposes on port 80 (maps to container 3000)
-- Verifies container is running after deployment
-
-### lazydocker
-- Downloads and installs v0.25.2 from GitHub releases
-- Supports offline mode with pre-pinned binary
-- Installs to `/usr/local/bin/lazydocker`
-
-## Ansible Configuration
-
-- Inventory: `ansible/inventories/hlh-docker.yml` (target: 192.168.1.13)
-- Playbook: `ansible/playbooks/hlh-docker.yml`
-- Requirements: `community.docker >= 3.4.0`
-- SSH auth: key-based (`~/.ssh/id_ed25519`)
-- Offline mode support: `hlh_offline` variable
-
-## Configuration Scripts
-
-### deploy-hlh-docker.sh
-- Two-stage workflow: OpenTofu provisioning + Ansible configuration
-- Modes: `--plan`, `--apply`, `--tf-only`, `--config-only`, `--offline`
-- API auth: supports both API tokens and username/password
-- Auto-probes Proxmox API for credential validation
-- Host override for Ansible stage via `--host`
+### deploy-plh-docker.sh
+- Three-stage workflow: LXD provision → software install → verification
+- Modes: `--plan`, `--apply`, `--config-only`, `--nuke`
+- Pure bash, no external IaC tools
+- Auto-detects container state, avoids redundant operations
+- Verifies Docker, Dockhand, and LazyDocker post-deployment
 
 ### configure-hlh-docker.sh
-- Standalone Ansible configuration stage
-- Offline mode support
-- SSH key or password auth options
+- Standalone configuration stage (post-deploy fixup)
+- Configures Docker daemon, bind mounts, Dockhand container
+- SSH key support via `--key` flag
 
 ## Repository Layout
 
 ```
-hlh-docker/
-├── deploy-hlh-docker.sh             # OpenTofu + Ansible two-stage deploy
-├── configure-hlh-docker.sh          # Ansible-only configuration
-├── ansible/
-│   ├── inventories/hlh-docker.yml
-│   ├── playbooks/hlh-docker.yml
-│   ├── requirements.yml
-│   └── roles/
-│       ├── docker-engine/tasks/main.yml
-│       ├── dockhand/tasks/main.yml
-│       └── lazydocker/tasks/main.yml
-├── opentofu/
-│   ├── main.tf
-│   └── variables.tf
-├── ADR-001.md
-├── 00_BACKLOG.md
-├── 10_ACTIVE.md
-├── 90_DONE.md
-├── CHANGELOG.md
-└── 98_README.md
+plh-docker/
+├── deploy-plh-docker.sh        # Pure-bash deploy: LXC + Docker + Dockhand
+├── configure-hlh-docker.sh     # Configuration helper
+├── ADR-001.md                  # Architecture Decision Record
+├── 00_BACKLOG.md               # Backlog / ideas
+├── 10_ACTIVE.md                # Active work items
+├── 90_DONE.md                  # Completed items
+├── 98_README.md                # Working notes
+├── CHANGELOG.md                # Version history
+└── README.md                   # This file
 ```

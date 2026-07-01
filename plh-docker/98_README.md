@@ -1,102 +1,93 @@
-# hlh-docker
+# PLH-Docker
 
-Infrastructure-as-Code for the HLH Docker container host. Deploys an unprivileged
-LXC running Docker, Dockhand, and LazyDocker on Proxmox.
+Infrastructure-as-Code for the PLH Docker container host. Deploys an unprivileged
+LXD container running Docker, Dockhand, and LazyDocker on CachyOS.
 
 ## Executive Summary
 
-This repository deploys and configures the **Docker LXC** on the HLH Proxmox host.
-The Docker host provides a secure, reproducible container runtime for application
-service stacks (Dockhand, LazyDocker).
+This repository deploys and configures the **Docker LXC** on the PLH CachyOS host
+using LXD. The Docker host provides a secure, reproducible container runtime for
+application service stacks (Dockhand, LazyDocker).
 
-- LXC 102, hostname `hlh-docker`, IP `192.168.1.13`
-- Unprivileged LXC with nesting + keyctl
+- LXC container `plh-docker`, hostname `plh-docker`, managed by LXD 6.9
+- Unprivileged container with nesting (`security.nesting=true`)
 - Docker Engine + Dockhand (GUI) + LazyDocker (TUI)
-- 4 vCPU, 4GB RAM, 32GB rootfs on `RaidZ1-6TB` ZFS pool
+- 4 vCPU, 4GB RAM, 32GB rootfs on ZFS-backed storage
 
 ## Repository Boundary
 
 **Owns:**
-- Unprivileged Docker LXC lifecycle (create, configure, start) on Proxmox
+- Unprivileged Docker container lifecycle (create, configure, start) on LXD
 - Docker Engine installation and configuration
 - Dockhand and LazyDocker deployment
-- ZFS storage mount wiring for persistent data
+- ZFS bind-mount wiring for persistent data
 
 **Does not own:**
-- Proxmox host configuration (that is `iac-hlh`)
+- CachyOS host configuration (OS-level setup)
 - Docker container application logic (that is the service repos)
 - AI engine deployment (that is `hlh-ai-engine`)
 
 ## Quick Start
 
-Deploy the Docker LXC:
+Deploy the Docker container on CachyOS:
 
 ```bash
-./deploy-hlh-docker.sh --apply
+cd ~/git/iac-plh/plh-docker
+./deploy-plh-docker.sh --apply
 ```
 
 Plan only:
 
 ```bash
-./deploy-hlh-docker.sh --plan
+./deploy-plh-docker.sh --plan
 ```
 
-Configure an existing LXC (no OpenTofu):
+Configure an existing container (no OpenTofu, no Ansible — pure bash):
 
 ```bash
-./deploy-hlh-docker.sh --config-only
+./deploy-plh-docker.sh --config-only
 ```
 
 ## Deployment Model
 
-Deployment and configuration are separate phases:
+Deployment and configuration are handled in a single pure-bash script. No OpenTofu, no Ansible, no Terraform.
 
-1. **Provisioning**: `deploy-hlh-docker.sh` runs OpenTofu to create the unprivileged LXC
-   with Docker-ready configuration (nesting, keyctl, VLAN support).
-2. **Configuration**: Ansible roles install Docker Engine, Dockhand, and LazyDocker.
+1. **Provisioning**: `lxc launch ubuntu:latest plh-docker` with nesting + resource limits
+2. **Configuration**: Docker Engine, Dockhand, and LazyDocker installed via `lxc exec` inside the running container
+3. **Verification**: Docker daemon, Dockhand container, and LazyDocker binary checked
 
 ## ADR
 
 See `ADR-001.md` for the full architecture decision: unprivileged LXC, Docker + Dockhand
-+ LazyDocker, ZFS storage, VLAN-aware networking.
++ LazyDocker, ZFS bind-mounts, CachyOS + LXD platform.
 
 ## Runtime Contract
 
 | Item | Value |
 |------|-------|
-| Host IP | `192.168.1.13` |
-| Dockhand GUI | `http://192.168.1.13:80` |
-| Docker socket | `/var/run/docker.sock` (inside LXC) |
-| Dockhand data | `/srv/dockhand` (host mount) |
-| Rootfs | 32GB on `RaidZ1-6TB` ZFS pool |
-| OS | Ubuntu 26.04 LTS |
+| Container name | `plh-docker` |
+| Dockhand GUI | `http://<container-ip>:80` |
+| Docker socket | `/var/run/docker.sock` (bind-mounted into container) |
+| Dockhand data | `/srv/data/dockhand/data` (host bind-mount) |
+| Docker data | `/srv/data/docker` (host bind-mount) |
+| Rootfs | 32GB on ZFS-backed LXD storage |
+| OS | Ubuntu (from LXD image remote) |
 
 ## Repository Layout
 
 ```
-hlh-docker/
-├── deploy-hlh-docker.sh             # OpenTofu + Ansible two-stage deploy
-├── configure-hlh-docker.sh          # Ansible-only configuration
-├── ansible/
-│   ├── inventories/hlh-docker.yml
-│   ├── playbooks/hlh-docker.yml
-│   ├── requirements.yml
-│   └── roles/
-│       ├── docker-engine/tasks/main.yml
-│       ├── dockhand/tasks/main.yml
-│       └── lazydocker/tasks/main.yml
-├── opentofu/
-│   ├── main.tf
-│   └── variables.tf
-├── ADR-001.md
-├── 00_BACKLOG.md
-├── 10_ACTIVE.md
-├── 90_DONE.md
-├── CHANGELOG.md
-└── 98_README.md
+plh-docker/
+├── deploy-plh-docker.sh             # Pure-bash deploy: LXC + Docker + Dockhand
+├── configure-hlh-docker.sh          # Configuration helper
+├── ADR-001.md                       # Architecture Decision Record
+├── 00_BACKLOG.md                    # Backlog / ideas
+├── 10_ACTIVE.md                     # Active work items
+├── 90_DONE.md                       # Completed items
+├── CHANGELOG.md                     # Version history
+└── 98_README.md                     # This file
 ```
 
 ## Governance
 
-This repo is a component of `iac-hlh`. Deployments use pinned commits for deterministic
-results. See the HLH Agile Design Handbook for the full architecture and dependency map.
+This repo is a component of `iac-plh`. Deployments use pinned commits for deterministic
+results. See the PLH Agile Design Handbook for the full architecture and dependency map.

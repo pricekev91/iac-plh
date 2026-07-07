@@ -23,7 +23,7 @@ HOST_LISTEN_ADDR="127.0.0.1"
 HOST_LISTEN_PORT="80"
 # ------------------------------------------
 
-log() { echo "[deploy] $*"; }
+log() { echo "[deploy] $*" >&2; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
 # =============================================================================
@@ -239,7 +239,7 @@ purge_container_nvidia_runtime_conflicts() {
     # stacks (nvidia-utils/libnvidia-compute/cuda-compat) can drift and cause
     # NVML mismatches after host driver upgrades.
     local pkgs
-    pkgs="$(exec_in_ct "dpkg-query -W -f='${Package}\n' 'nvidia-utils-*' 'libnvidia-compute-*' 'cuda-compat-*' 2>/dev/null | sort -u || true")"
+    pkgs="$(exec_in_ct "dpkg-query -W -f='\${Package}\n' 'nvidia-utils-*' 'libnvidia-compute-*' 'cuda-compat-*' 2>/dev/null | sort -u || true")"
 
     if [[ -z "$pkgs" ]]; then
         log "No conflicting container NVIDIA runtime packages detected"

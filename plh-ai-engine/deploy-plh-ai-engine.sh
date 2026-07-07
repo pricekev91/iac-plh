@@ -8,7 +8,7 @@ IMAGE="ubuntu:24.04"
 
 MODEL_DIR_HOST="/srv/ai/models"
 MODEL_DIR_CT="/srv/ai/models"
-MODEL_FILE="Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+MODEL_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
 
 GPU_DEVICE_NAME="gpu0"          # LXD gpu device name inside CT
 PROXY_DEVICE_NAME="http-local"  # LXD proxy device name
@@ -17,8 +17,6 @@ SERVICE_NAME="llama-server"
 INSTALL_MARKER="/root/.llama_cpp_installed"
 SCRIPTS_DIR="$(dirname "$0")/scripts"
 
-# llama-server listens on 127.0.0.1:80 inside the CT,
-# proxied to 127.0.0.1:80 on the host.
 CT_LISTEN_ADDR="127.0.0.1"
 CT_LISTEN_PORT="80"
 HOST_LISTEN_ADDR="127.0.0.1"
@@ -27,6 +25,53 @@ HOST_LISTEN_PORT="80"
 
 log() { echo "[deploy] $*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
+
+# =============================================================================
+# NVIDIA driver / CUDA version detection (host-side)
+# =============================================================================
+# These functions run on the HOST (plh) to detect the current NVIDIA driver
+# version and the maximum CUDA version it supports.  The detected CUDA version
+# is then used to install the matching toolkit inside the container.
+
+detect_cuda_version() {
+    # Extract the CUDA UMD version from `nvidia-smi` on the host.
+    # The UMD version is the highest CUDA toolkit version the driver supports.
+    local cuda_ver
+    cuda_ver="$(nvidia-smi 2>/dev/null | grep -oP 'CUDA UMD Version: \K[0-9.]+' || echo '')"
+    if [[ -z "$cuda_ver" ]]; then
+        fail "Could not detect CUDA version from nvidia-smi. Is the NVIDIA driver installed and loaded?"
+    fi
+    echo "$cuda_ver"
+}
+
+get_highest_cuda_version() {
+    # Query the NVIDIA CUDA repo (Ubuntu 24.04 / x86_64) and return the
+    # highest available CUDA toolkit version.  This is used as a fallback
+    # when the detected driver CUDA version is newer than anything in the repo.
+    local highest
+    highest="$(curl -sL --max-time 30 \
+        https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/Packages 2>/dev/null | \
+        grep '^Package: cuda-nvcc-[0-9]' | \
+        sed 's/Package: cuda-nvcc-//' | \
+        sed 's/\(.*\)-\(.*\)/\1.\2/' | \
+        sort -V | \
+        tail -1)"
+    if [[ -z "$highest" ]]; then
+        fail "Could not determine highest available CUDA version from NVIDIA repo"
+    fi
+    log "Highest CUDA version available in NVIDIA repo: $highest"
+    echo "$highest"
+}
+
+version_leq() {
+    # Returns 0 (true) if $1 <= $2, 1 (false) otherwise.
+    # Uses sort -V for correct semantic version comparison.
+    local higher
+    higher="$(printf '%s\n%s' "$1" "$2" | sort -V | tail -1)"
+    [[ "$higher" == "$2" ]]
+}
+
+# =============================================================================
 
 # Kill any llama-server running directly on the host (not inside the container).
 # This prevents GPU VRAM waste and port conflicts.
@@ -38,7 +83,7 @@ kill_host_llama_server() {
         return 0
     fi
     log "Killing host-side llama-server (PIDs: $pids)"
-    echo "$pids" | xargs kill -TERM
+    echo "$pids" | xargs -r kill -TERM 2>/dev/null || true
     # Wait up to 10s for clean shutdown
     local waited=0
     while (( waited < 10 )); do
@@ -54,7 +99,7 @@ kill_host_llama_server() {
     pids="$(echo "$pids" | xargs -r ps -p 2>/dev/null | awk 'NR>1 && /llama-server/{print $1}' || true)"
     if [[ -n "$pids" ]]; then
         log "Force-killing remaining PIDs: $pids"
-        echo "$pids" | xargs kill -9
+        echo "$pids" | xargs -r kill -9 2>/dev/null || true
     fi
     log "Host-side llama-server killed"
 }
@@ -80,26 +125,11 @@ ct_exists() {
     lxc info "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1
 }
 
-container_is_broken() {
-    # A container is broken if it exists but rootfs is corrupted
-    # (e.g. /sbin/init missing — LXD fails to exec it).
-    if ! ct_exists; then
-        return 1
-    fi
-    # Try starting it briefly; if it aborts, rootfs is broken.
-    lxc start "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1
-    local start_status=$?
-    lxc stop "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1 || true
-    lxc delete --force "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1 || true
-    return $start_status
-}
-
 ensure_container() {
-    if container_is_broken; then
-        log "Container rootfs corrupted, recreating from scratch"
-    elif ct_exists; then
-        log "Container exists: $PROJECT/$CT_NAME"
-        return
+    if ct_exists; then
+        log "Always-nuke mode: removing existing container $PROJECT/$CT_NAME"
+        lxc stop "$CT_NAME" --project "$PROJECT" >/dev/null 2>&1 || true
+        lxc delete --force "$CT_NAME" --project "$PROJECT"
     fi
 
     log "Init container: $PROJECT/$CT_NAME from $IMAGE"
@@ -204,6 +234,24 @@ exec_in_ct() {
     lxc exec "$CT_NAME" --project "$PROJECT" -- bash -lc "$*"
 }
 
+purge_container_nvidia_runtime_conflicts() {
+    # In LXC, host kernel driver is authoritative. Container-side runtime
+    # stacks (nvidia-utils/libnvidia-compute/cuda-compat) can drift and cause
+    # NVML mismatches after host driver upgrades.
+    local pkgs
+    pkgs="$(exec_in_ct "dpkg-query -W -f='${Package}\n' 'nvidia-utils-*' 'libnvidia-compute-*' 'cuda-compat-*' 2>/dev/null | sort -u || true")"
+
+    if [[ -z "$pkgs" ]]; then
+        log "No conflicting container NVIDIA runtime packages detected"
+        return 0
+    fi
+
+    log "Purging conflicting container NVIDIA runtime packages"
+    printf '%s\n' "$pkgs"
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get purge -y $pkgs || true"
+    exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+}
+
 # Add NVIDIA CUDA APT repository to the container
 # Download from host (container may not have network ready during early boot)
 add_cuda_repo() {
@@ -247,8 +295,6 @@ ensure_llama_cpp_installed() {
     local build_dir="/opt/llama.cpp/build"
     local cmake_cache="/opt/llama.cpp/build/CMakeCache.txt"
     local needs_rebuild=0
-    local ct_cuda_ver=""
-    local required_cuda_ver="12.8"
 
     # Wait for container network before any apt commands
     wait_for_network
@@ -258,40 +304,38 @@ ensure_llama_cpp_installed() {
         add_cuda_repo
     fi
 
-    # Detect CUDA toolkit version inside container
-    ct_cuda_ver="$(exec_in_ct "nvcc --version 2>/dev/null | grep -oP 'release \K[0-9.]+' || echo ''")"
+    # Determine package suffix: dots → dashes (13.3 → 13-3)
+    local cuda_pkg_ver="${CT_CUDA_VER//./-}"
 
-    if exec_in_ct "[ -f '$INSTALL_MARKER' ]"; then
-        local marker_ver
-        marker_ver="$(exec_in_ct "cat '$INSTALL_MARKER'" 2>/dev/null)"
-        if [[ "$ct_cuda_ver" != "$required_cuda_ver" ]]; then
-            log "CUDA toolkit version mismatch: container has ${ct_cuda_ver:-none}, need $required_cuda_ver"
-            log "Upgrading CUDA toolkit and rebuilding llama.cpp"
-            needs_rebuild=1
-        elif exec_in_ct "test -e /dev/nvidia0 && grep -q 'GGML_CUDA' '$cmake_cache' 2>/dev/null"; then
-            # Also verify CUDA runtime actually works (not just present)
-            if exec_in_ct "LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/stubs:/usr/lib:/usr/local/lib nvcc --version 2>/dev/null" >/dev/null 2>&1; then
-                log "llama.cpp already installed with CUDA $ct_cuda_ver (marker present, CUDA build detected, runtime OK)"
+    # Check marker for driver + CUDA version match
+    local marker_driver_ver="" marker_cuda_ver=""
+    if exec_in_ct "[ -f '$INSTALL_MARKER' ]" 2>/dev/null; then
+        marker_driver_ver="$(exec_in_ct "grep '^driver_ver=' '$INSTALL_MARKER' 2>/dev/null | cut -d= -f2" || echo '')"
+        marker_cuda_ver="$(exec_in_ct "grep '^cuda_ver=' '$INSTALL_MARKER' 2>/dev/null | cut -d= -f2" || echo '')"
+
+        if [[ "$marker_driver_ver" == "$DRIVER_VER" && "$marker_cuda_ver" == "$CT_CUDA_VER" ]]; then
+            # Versions match — verify CUDA build actually exists
+            if exec_in_ct "test -e /dev/nvidia0 && grep -q 'GGML_CUDA' '$cmake_cache' 2>/dev/null && test -f /opt/llama.cpp/build/bin/llama-server" 2>/dev/null; then
+                log "llama.cpp already installed with CUDA $CT_CUDA_VER (marker present, CUDA build detected, binary exists)"
                 return
-            else
-                log "CUDA runtime may not work — rebuilding to be safe"
-                needs_rebuild=1
             fi
+            log "Marker matches but CUDA build / binary not found — rebuilding to be safe"
+            needs_rebuild=1
         else
-            log "llama.cpp exists but needs CUDA rebuild (no CUDA detected in build)"
+            log "Version changed — driver: ${marker_driver_ver:-none} → $DRIVER_VER, CUDA: ${marker_cuda_ver:-none} → $CT_CUDA_VER"
             needs_rebuild=1
         fi
+    else
+        log "No marker found — installing CUDA toolkit $CT_CUDA_VER (driver: $DRIVER_VER)"
+        needs_rebuild=1
     fi
 
     if [[ "$needs_rebuild" -eq 1 ]]; then
-        # Clean old build if CUDA version is changing
-        if [[ "$ct_cuda_ver" != "$required_cuda_ver" ]]; then
-            log "Cleaning old build (CUDA version changing from ${ct_cuda_ver:-unknown} to $required_cuda_ver)"
-            exec_in_ct "rm -rf '$build_dir'"
-        fi
+        log "Cleaning old build"
+        exec_in_ct "rm -rf '$build_dir'"
     fi
 
-    log "Installing CUDA toolkit $required_cuda_ver and build deps (host driver needs >= 12.6)"
+    log "Installing CUDA toolkit $CT_CUDA_VER and build dependencies"
 
     # Fix any dpkg state from a previous partial failure so the script
     # is fully idempotent (works on fresh install and after retries).
@@ -304,15 +348,11 @@ ensure_llama_cpp_installed() {
     # The CUDA toolkit stub libcuda.so lacks Driver API symbols needed at link
     # time — the real libcuda.so is copied from the host in ensure_cuda_driver_lib().
     # --no-install-recommends avoids nsight/GTK3/Java bloat.
-    local cuda_pkg_ver="${required_cuda_ver//./-}"
+    local cuda_pkg_ver="${CT_CUDA_VER//./-}"
     exec_in_ct "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-         cuda-nvcc-$cuda_pkg_ver cuda-cudart-dev-$cuda_pkg_ver \
-         libcublas-dev-$cuda_pkg_ver cuda-compat-$cuda_pkg_ver \
-         cmake build-essential git"
-
-    log "Checking latest llama.cpp version on GitHub"
-    GITHUB_LATEST="$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/commits/main 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['sha'][:7], d['commit']['author']['date'][:10])" 2>/dev/null || echo "unknown")"
-    log "Latest on GitHub: ${GITHUB_LATEST}"
+        cuda-nvcc-$cuda_pkg_ver cuda-cudart-dev-$cuda_pkg_ver \
+        libcublas-dev-$cuda_pkg_ver \
+        cmake build-essential git"
 
     log "Get latest llama.cpp from GitHub"
     if exec_in_ct "[ -d /opt/llama.cpp/.git ]"; then
@@ -328,14 +368,15 @@ ensure_llama_cpp_installed() {
     # Pass the real libcuda.so path to cmake so it links against the host driver
     # library (copied in ensure_cuda_driver_lib) instead of the CUDA toolkit stub
     # that lacks Driver API symbols.
-    log "Configuring llama.cpp build with CUDA support"
+    log "Configuring llama.cpp build with CUDA $CT_CUDA_VER support"
     exec_in_ct 'export PATH=/usr/local/cuda/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && cd /opt/llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_FLAGS="-L/usr/lib"'
 
     log "Building llama.cpp (this may take several minutes) ..."
-     exec_in_ct 'export PATH=/usr/local/cuda/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && cd /opt/llama.cpp && cmake --build build -j$(nproc)'
+    exec_in_ct 'export PATH=/usr/local/cuda/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && cd /opt/llama.cpp && cmake --build build -j$(nproc)'
 
-     exec_in_ct "echo '$required_cuda_ver' > '$INSTALL_MARKER'"
-     log "llama.cpp installed with CUDA $required_cuda_ver support"
+    # Write marker with both driver version and CUDA toolkit version
+    exec_in_ct "echo 'driver_ver=$DRIVER_VER cuda_ver=$CT_CUDA_VER' > '$INSTALL_MARKER'"
+    log "llama.cpp installed with CUDA $CT_CUDA_VER support (driver: $DRIVER_VER)"
 }
 
 ensure_service_unit() {
@@ -384,7 +425,7 @@ UNITEOF
 ensure_switch_model() {
     # Deploy the fixed switch-model.sh to the container.
     # The old awk-based version (in the container) had a bug where print
-    # statements used \\\\\\" which produced literal " on each line of
+    # statements used \\\\ which produced literal " on each line of
     # ExecStart, creating a multi-line ExecStart that systemd chokes on:
     #   ExecStart=/opt/llama.cpp/build/bin/llama-server \"
     #     --model /path/gguf \"
@@ -419,6 +460,27 @@ ensure_switch_model() {
 main() {
     require lxc
 
+    # Detect NVIDIA driver and CUDA version from host at deploy time.
+    # No hardcoded versions — we always match the host driver.
+    DRIVER_VER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo '')"
+    if [[ -z "$DRIVER_VER" ]]; then
+        fail "Could not detect NVIDIA driver version. Is the NVIDIA driver installed and loaded?"
+    fi
+    log "Detected NVIDIA driver version: $DRIVER_VER"
+
+    # Detect the CUDA version the driver supports (from nvidia-smi output)
+    CT_CUDA_VER="$(detect_cuda_version)"
+
+    # Check if detected CUDA version exists in the repo; if not, fall back
+    # to the highest version available (driver may be newer than repo).
+    HIGHEST_CUDA_VER="$(get_highest_cuda_version)"
+    if ! version_leq "$CT_CUDA_VER" "$HIGHEST_CUDA_VER"; then
+        log "Detected CUDA version $CT_CUDA_VER not yet in repo, using highest available: $HIGHEST_CUDA_VER"
+        CT_CUDA_VER="$HIGHEST_CUDA_VER"
+    fi
+
+    log "Will install CUDA toolkit version $CT_CUDA_VER (host driver: $DRIVER_VER)"
+
     # Kill any host-side llama-server first (prevents VRAM waste + port conflicts)
     kill_host_llama_server
 
@@ -428,8 +490,10 @@ main() {
     ensure_model_mount
     ensure_proxy_device
     ensure_started
+    purge_container_nvidia_runtime_conflicts
     ensure_cuda_driver_lib
     ensure_llama_cpp_installed
+    purge_container_nvidia_runtime_conflicts
     ensure_service_unit
     ensure_switch_model
 
